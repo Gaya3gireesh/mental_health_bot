@@ -1,4 +1,9 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
+import 'dart:io' show Platform;
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'message.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -7,12 +12,13 @@ class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, this.initialEmotion});
 
   @override
-  _ChatScreenState createState() => _ChatScreenState();
+  ChatScreenState createState() => ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class ChatScreenState extends State<ChatScreen> {
   final List<Message> _messages = [];
   final _textController = TextEditingController();
+  bool _isLoading = false;
 
   @override
   void initState() {
@@ -32,17 +38,67 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _handleSubmitted(String text) {
+    if (text.trim().isEmpty) return;
+    
     _textController.clear();
 
     setState(() {
       _messages.add(Message(text: text, isUser: true));
+      _isLoading = true;
     });
 
-    // Add chatbot response logic here
-    // This is a simple example response
-    Future.delayed(const Duration(seconds: 1), () {
-      _addBotMessage("I hear you. Can you tell me more about that?");
+    // Call backend API
+    _getBotResponse(text).then((response) {
+      setState(() {
+        _isLoading = false;
+        _addBotMessage(response);
+      });
+    }).catchError((error) {
+      setState(() {
+        _isLoading = false;
+        _addBotMessage("Sorry, I'm having trouble connecting right now. Please try again later.");
+      });
+      print("Error connecting to backend: $error");
     });
+  }
+
+  Future<String> _getBotResponse(String message) async {
+    // Get base URL from .env file with fallback
+    String baseUrl = dotenv.env['API_BASE_URL'] ?? 'http://10.0.2.2:5000';
+    
+    // If on iOS and using default Android emulator address, replace with localhost
+    if (Platform.isIOS && baseUrl.contains('10.0.2.2')) {
+      baseUrl = baseUrl.replaceAll('10.0.2.2', 'localhost');
+    }
+    
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/chat'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'message': message,
+          'emotion': widget.initialEmotion ?? '',
+        }),
+      ).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          throw TimeoutException('Connection timed out. Please check your server.');
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['response'];
+      } else {
+        throw Exception('Failed to load response: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('Error in API call: $e');
+      if (e is TimeoutException) {
+        return "Sorry, the server is taking too long to respond. Please try again later.";
+      }
+      throw e;
+    }
   }
 
   @override
@@ -50,6 +106,32 @@ class _ChatScreenState extends State<ChatScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Chat with Support'),
+        actions: [
+          // Add this test button to the app bar
+          IconButton(
+            icon: const Icon(Icons.network_check),
+            tooltip: 'Test Connection',
+            onPressed: () async {
+              try {
+                final response = await http.get(
+                  Uri.parse('${dotenv.env['API_BASE_URL'] ?? 'http://10.0.2.2:5000'}/test_connection')
+                );
+                if (response.statusCode == 200) {
+                  final data = json.decode(response.body);
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Backend connected: ${data['message']}')),
+                  );
+                }
+              } catch (e) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Connection error: $e')),
+                );
+              }
+            },
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -63,6 +145,11 @@ class _ChatScreenState extends State<ChatScreen> {
               },
             ),
           ),
+          if (_isLoading) 
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 8.0),
+              child: const Center(child: CircularProgressIndicator()),
+            ),
           _buildMessageComposer(),
         ],
       ),
