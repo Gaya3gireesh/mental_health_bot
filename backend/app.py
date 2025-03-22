@@ -373,5 +373,73 @@ def test_connection():
         'gemini_status': gemini_status
     })
 
+@app.route('/resources', methods=['GET'])
+def get_resources():
+    resources_dir = os.path.join(os.path.dirname(__file__), "resources")
+    refresh = request.args.get('refresh', 'false').lower() == 'true'
+    resources = []
+    
+    # Ensure directory exists
+    if not os.path.exists(resources_dir):
+        os.makedirs(resources_dir, exist_ok=True)
+        # Force refresh if directory was just created
+        refresh = True
+        
+    # If refresh requested or no files exist, trigger scraping
+    if refresh or not any(f.startswith('scraped_data_') for f in os.listdir(resources_dir) if os.path.isfile(os.path.join(resources_dir, f))):
+        try:
+            # Import the scraper function
+            from scrape_resources import scrape_website
+            
+            # List of URLs to scrape
+            urls = [
+                "https://www.nimh.nih.gov/health/publications/5-action-steps-to-help-someone-having-thoughts-of-suicide",
+                "https://www.nimh.nih.gov/health/publications/depression",
+                "https://www.nimh.nih.gov/health/publications/generalized-anxiety-disorder-gad",
+                "https://www.nimh.nih.gov/health/publications/my-mental-health-do-i-need-help",
+                "https://www.nimh.nih.gov/health/publications/panic-disorder-when-fear-overwhelms"
+            ]
+            
+            # Scrape each URL and save to separate files
+            for i, url in enumerate(urls):
+                filename = os.path.join(resources_dir, f"scraped_data_{i+1}.txt")
+                scrape_website(url, filename)
+            
+            print("Web scraping completed")
+        except Exception as e:
+            print(f"Error during web scraping: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Load resources from files
+    for i in range(1, 6):  # 5 resources
+        filename = os.path.join(resources_dir, f"scraped_data_{i}.txt")
+        try:
+            if os.path.exists(filename):
+                with open(filename, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                # Extract title if available, otherwise use default
+                title = f"Mental Health Resource {i}"
+                if content.startswith("TITLE:"):
+                    title_end = content.find("\n\n")
+                    if title_end > 0:
+                        title = content[6:title_end].strip()
+                        content = content[title_end:].strip()
+                
+                resources.append({
+                    "title": title,
+                    "content": content
+                })
+            else:
+                print(f"Resource file not found: {filename}")
+        except Exception as e:
+            print(f"Error loading resource {i}: {e}")
+    
+    return jsonify({
+        "resources": resources,
+        "updated": refresh
+    })
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
