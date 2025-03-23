@@ -19,18 +19,37 @@ class ChatScreen extends StatefulWidget {
   ChatScreenState createState() => ChatScreenState();
 }
 
-class ChatScreenState extends State<ChatScreen> {
+class ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateMixin {
   final List<Message> _messages = [];
   final _textController = TextEditingController();
   bool _isLoading = false;
+  bool _isChatting = false; // To track if the user has started chatting
   List<MentalHealthResource> _resources = [];
   bool _isLoadingResources = false;
   bool _resourcesLoaded = false;
   String? _currentMood;
 
+  // Initialize with a default value to prevent late initialization error
+  late AnimationController _animationController;
+  late Animation<double> _fadeAnimation = const AlwaysStoppedAnimation(1.0);
+
   @override
   void initState() {
     super.initState();
+    
+    // Initialize animation controller
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
+    );
+
+    // Now set the proper animation
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _animationController,
+        curve: Curves.easeInOut,
+      )
+    );
     
     // Set initial mood if provided
     if (widget.initialEmotion != null && widget.initialEmotion!.isNotEmpty) {
@@ -48,6 +67,13 @@ class ChatScreenState extends State<ChatScreen> {
     
     // Load resources automatically when app starts
     _loadResources();
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    _textController.dispose();
+    super.dispose();
   }
   
   Future<void> _loadResources({bool refresh = false}) async {
@@ -153,7 +179,11 @@ class ChatScreenState extends State<ChatScreen> {
     setState(() {
       _messages.add(Message(text: text, isUser: true));
       _isLoading = true;
+      _isChatting = true; // Transition to chat layout
     });
+    
+    // Start animation when transitioning to chat layout
+    _animationController.forward();
 
     // Call backend API
     _getBotResponse(text).then((response) {
@@ -244,102 +274,105 @@ class ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
-        return true; // Allow the screen to be popped
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Chat with Support'),
-          actions: [
-            // Add this test button to the app bar
-            IconButton(
-              icon: const Icon(Icons.network_check),
-              tooltip: 'Test Connection',
-              onPressed: () async {
-                try {
-                  final response = await http.get(
-                    Uri.parse('${dotenv.env['API_BASE_URL'] ?? 'http://10.0.2.2:5000'}/test_connection')
-                  );
-                  if (response.statusCode == 200) {
-                    final data = json.decode(response.body);
-                    if (!mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Backend connected: ${data['message'] ?? "OK"}')),
-                    );
-                  }
-                } catch (e) {
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Connection error: Check your server')),
-                  );
-                }
-              },
-            ),
-            // Add this to your AppBar actions list
-            IconButton(
-              icon: const Icon(Icons.save),
-              tooltip: 'Current Mood',
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Current mood: $_currentMood')),
-                );
-              },
-            ),
-            // Inside your AppBar actions list in build method, add this new button:
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F5F5),
+      appBar: AppBar(
+        elevation: 0,
+        backgroundColor: Colors.transparent,
+        title: const Text(
+          'Daily Reflection',
+          style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+        ),
+        centerTitle: true,
+        iconTheme: const IconThemeData(color: Colors.black),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.mood),
+            onPressed: _showMoodSelectionDialog,
+          ),
+          IconButton(
+            icon: const Icon(Icons.info_outline),
+            onPressed: _showResourcesDialog,
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // Greeting Section
+          if (!_isChatting) _buildGreetingSection(),
 
-            IconButton(
-              icon: const Icon(Icons.mood),
-              tooltip: 'Set Current Mood',
-              onPressed: () {
-                _showMoodSelectionDialog();
-              },
+          // Dynamic Island Section - Key fix is here
+          if (_isChatting) 
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 400),
+              child: Container(
+                key: ValueKey(_currentMood), // Crucial for rebuild
+                padding: const EdgeInsets.all(16.0),
+                child: MoodIsland(
+                  key: ValueKey(_currentMood), // Add key to MoodIsland too
+                  currentMood: _currentMood ?? 'Neutral',
+                ),
+              ),
             ),
-          ],
-        ),
-        body: Column(
-          children: [
-            // Make sure this part of your build method is correct
-            Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: MoodIsland(currentMood: _currentMood ?? 'Neutral'),
-            ),
-            
+
+          // Chat Messages Section
+          if (_isChatting)
             Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.all(8.0),
-                itemCount: _messages.length,
-                itemBuilder: (context, index) {
-                  final message = _messages[index];
-                  return _buildMessage(message);
-                },
+              child: FadeTransition(
+                opacity: _fadeAnimation,
+                child: Stack(
+                  children: [
+                    ListView.builder(
+                      padding: const EdgeInsets.all(8.0),
+                      itemCount: _messages.length,
+                      itemBuilder: (context, index) {
+                        final message = _messages[index];
+                        return _buildMessage(message);
+                      },
+                    ),
+                    if (_isLoading)
+                      const Center(
+                        child: CircularProgressIndicator(),
+                      ),
+                  ],
+                ),
               ),
             ),
-            if (_isLoading) 
-              Container(
-                padding: const EdgeInsets.symmetric(vertical: 8.0),
-                child: const Center(child: CircularProgressIndicator()),
-              ),
-            _buildMessageComposer(),
-          ],
-        ),
-        // Add this to position the floating action button higher
-        floatingActionButtonLocation: const CustomFloatingActionButtonLocation(80),
-        floatingActionButton: FloatingActionButton(
-          onPressed: () {
-            // Show a loading snackbar
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Loading resources...'),
-                duration: Duration(seconds: 1),
+
+          // Message Composer
+          _buildMessageComposer(),
+        ],
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: 0,
+        onTap: (index) {
+          if (index == 1) {
+            // Navigate to therapist connection page
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => Scaffold(
+                  appBar: AppBar(
+                    title: const Text('Therapist Connection'),
+                  ),
+                  body: const Center(
+                    child: Text('Therapist Connection Page'),
+                  ),
+                ),
               ),
             );
-            // Then show the resources dialog
-            _showResourcesDialog();
-          },
-          tooltip: 'Mental Health Resources',
-          child: const Icon(Icons.menu_book),
-        ),
+          }
+        },
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.home),
+            label: 'Home',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.person),
+            label: 'Therapists',
+          ),
+        ],
       ),
     );
   }
@@ -538,7 +571,8 @@ class ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildMessage(Message message) {
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
       margin: EdgeInsets.only(
         top: 8.0,
         bottom: 8.0,
@@ -547,52 +581,78 @@ class ChatScreenState extends State<ChatScreen> {
       ),
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
       decoration: BoxDecoration(
-        color: message.isUser ? Colors.blue : Colors.grey[300],
+        color: message.isUser ? Colors.blue : Colors.white,
         borderRadius: BorderRadius.circular(20.0),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.2),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Text(
         message.text,
         style: TextStyle(
-          color: message.isUser ? Colors.white : Colors.black,
+          color: message.isUser ? Colors.white : Colors.black87,
         ),
       ),
     );
   }
 
   Widget _buildMessageComposer() {
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
       padding: const EdgeInsets.all(8.0),
+      margin: EdgeInsets.only(
+        left: 16.0, 
+        right: 16.0, 
+        bottom: _isChatting ? 8.0 : 32.0,
+      ),
       decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        border: Border(
-          top: BorderSide(color: Colors.grey[200]!),
-        ),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(_isChatting ? 24.0 : 30.0),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.2),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Row(
         children: [
+          const SizedBox(width: 8),
           Expanded(
             child: TextField(
               controller: _textController,
-              decoration: const InputDecoration(
-                hintText: 'Type a message...',
+              decoration: InputDecoration(
+                hintText: _isChatting ? 'Type a message...' : 'Your reflection...',
                 border: InputBorder.none,
               ),
               onSubmitted: _handleSubmitted,
+              onTap: () {
+                setState(() {
+                  _isChatting = true; // Transition to chat layout
+                });
+              },
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.send),
-            onPressed: () => _handleSubmitted(_textController.text),
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            decoration: BoxDecoration(
+              color: _isChatting ? Colors.blue : Colors.blue.shade50,
+              shape: BoxShape.circle,
+            ),
+            child: IconButton(
+              icon: const Icon(Icons.send),
+              color: _isChatting ? Colors.white : Colors.blue,
+              onPressed: () => _handleSubmitted(_textController.text),
+            ),
           ),
         ],
       ),
     );
-  }
-
-  @override
-  void dispose() {
-    _textController.dispose();
-    super.dispose();
   }
 
   // Move this method INSIDE the ChatScreenState class
@@ -600,27 +660,126 @@ class ChatScreenState extends State<ChatScreen> {
     // Make lowercase for case-insensitive matching
     final lowerResponse = response.toLowerCase();
     
-    // Map of mood keywords to return values
+    // Expanded map of mood keywords with more comprehensive indicators
     final Map<String, List<String>> moodKeywords = {
-      'Happy': ['happy', 'joy', 'glad', 'cheerful', 'delighted', 'pleased'],
-      'Sad': ['sad', 'unhappy', 'depressed', 'down', 'blue', 'gloomy'],
-      'Angry': ['angry', 'upset', 'frustrated', 'mad', 'furious', 'irritated'],
-      'Calm': ['calm', 'relaxed', 'peaceful', 'tranquil', 'serene'],
-      'Anxious': ['anxious', 'worried', 'nervous', 'stress', 'tense', 'uneasy'],
-      'Neutral': ['neutral', 'fine', 'okay', 'alright']
+      'Happy': [
+        'happy', 'joy', 'glad', 'cheerful', 'delighted', 'pleased', 'excited', 'thrilled',
+        'content', 'satisfied', 'elated', 'wonderful', 'great', 'fantastic', 'terrific',
+        'good mood', 'positive', 'upbeat', 'enthusiastic', 'overjoyed', 'ecstatic',
+        'smiling', 'laugh', 'laughing', 'grin', 'beaming', 'radiant', 'uplifted'
+      ],
+      'Sad': [
+        'sad', 'unhappy', 'depressed', 'down', 'blue', 'gloomy', 'miserable', 'sorrow',
+        'grief', 'heartbroken', 'devastated', 'upset', 'discouraged', 'disappointed',
+        'despondent', 'disheartened', 'distressed', 'melancholy', 'mournful', 'hopeless',
+        'forlorn', 'tearful', 'crying', 'weeping', 'somber', 'dejected', 'downcast', 'bummed'
+      ],
+      'Angry': [
+        'angry', 'upset', 'frustrated', 'mad', 'furious', 'irritated', 'annoyed', 'agitated',
+        'outraged', 'resentful', 'hostile', 'enraged', 'incensed', 'indignant', 'livid',
+        'provoked', 'irate', 'fuming', 'seething', 'vexed', 'infuriated', 'cross', 'grumpy'
+      ],
+      'Calm': [
+        'calm', 'relaxed', 'peaceful', 'tranquil', 'serene', 'composed', 'collected', 'centered',
+        'at ease', 'mellow', 'soothing', 'quiet', 'settled', 'still', 'placid', 'unruffled',
+        'zen', 'harmonious', 'balanced', 'restful', 'chill', 'stable', 'steady', 'level-headed'
+      ],
+      'Anxious': [
+        'anxious', 'worried', 'nervous', 'stress', 'tense', 'uneasy', 'apprehensive', 'concerned',
+        'afraid', 'fearful', 'scared', 'frightened', 'alarmed', 'panicky', 'jittery', 'edgy',
+        'restless', 'troubled', 'bothered', 'distressed', 'fretful', 'agitated', 'overwhelmed',
+        'dreading', 'panic', 'terror', 'phobia', 'dread', 'uncertainty', 'doubt', 'hesitant'
+      ],
+      'Neutral': [
+        'neutral', 'fine', 'okay', 'alright', 'average', 'moderate', 'so-so', 'fair',
+        'indifferent', 'impartial', 'balanced', 'medium', 'standard', 'usual', 'regular'
+      ]
     };
     
-    // Find the first mood that matches any keyword
+    // Contextual tone analysis with weights
+    Map<String, int> moodScores = {
+      'Happy': 0,
+      'Sad': 0,
+      'Angry': 0,
+      'Calm': 0,
+      'Anxious': 0,
+      'Neutral': 0,
+    };
+
+    // Check for exact keyword matches
     for (final entry in moodKeywords.entries) {
       for (final keyword in entry.value) {
         if (lowerResponse.contains(keyword)) {
-          print("Found mood keyword: $keyword, setting mood to: ${entry.key}");
-          return entry.key;
+          // Increase score for this mood
+          moodScores[entry.key] = moodScores[entry.key]! + 2;
+          print("Found mood keyword: $keyword, adding to ${entry.key} score");
         }
       }
     }
+
+    // Look for sentence sentiment indicators
+    if (lowerResponse.contains('feeling better') || 
+        lowerResponse.contains('that\'s great') ||
+        lowerResponse.contains('good to hear')) {
+      moodScores['Happy'] = moodScores['Happy']! + 1;
+    }
     
-    // If no mood is found, don't change the current mood
+    if (lowerResponse.contains('sorry to hear') || 
+        lowerResponse.contains('that sounds difficult') ||
+        lowerResponse.contains('that must be hard')) {
+      moodScores['Sad'] = moodScores['Sad']! + 1;
+    }
+
+    if (lowerResponse.contains('take a deep breath') || 
+        lowerResponse.contains('relax') ||
+        lowerResponse.contains('let\'s focus')) {
+      moodScores['Calm'] = moodScores['Calm']! + 1;
+    }
+
+    if (lowerResponse.contains('it\'s understandable') || 
+        lowerResponse.contains('many people feel this way') ||
+        lowerResponse.contains('it\'s common to')) {
+      moodScores['Neutral'] = moodScores['Neutral']! + 1;
+    }
+
+    // If clear patterns like "you seem" or "you sound" are present
+    if (lowerResponse.contains('you seem happy') || lowerResponse.contains('you sound cheerful')) {
+      moodScores['Happy'] = moodScores['Happy']! + 3;
+    }
+    if (lowerResponse.contains('you seem sad') || lowerResponse.contains('you sound down')) {
+      moodScores['Sad'] = moodScores['Sad']! + 3;
+    }
+    if (lowerResponse.contains('you seem angry') || lowerResponse.contains('you sound frustrated')) {
+      moodScores['Angry'] = moodScores['Angry']! + 3;
+    }
+    if (lowerResponse.contains('you seem calm') || lowerResponse.contains('you sound relaxed')) {
+      moodScores['Calm'] = moodScores['Calm']! + 3;
+    }
+    if (lowerResponse.contains('you seem anxious') || lowerResponse.contains('you sound worried')) {
+      moodScores['Anxious'] = moodScores['Anxious']! + 3;
+    }
+
+    // Debug output
+    print("Mood scores: $moodScores");
+    
+    // Find the mood with the highest score
+    String detectedMood = '';
+    int highestScore = 0;
+    
+    moodScores.forEach((mood, score) {
+      if (score > highestScore) {
+        highestScore = score;
+        detectedMood = mood;
+      }
+    });
+    
+    // Only return a mood if the score is above a threshold (to avoid false positives)
+    if (highestScore > 1) {
+      print("Detected mood: $detectedMood with score $highestScore");
+      return detectedMood;
+    }
+    
+    // If no strong mood was detected
     return '';
   }
 
@@ -649,9 +808,16 @@ class ChatScreenState extends State<ChatScreen> {
     return SimpleDialogOption(
       onPressed: () {
         Navigator.pop(context);
+        
+        // Update the mood state and force rebuild
         setState(() {
           _currentMood = mood;
           print("Manually set mood to: $_currentMood");
+        });
+        
+        // Force a delayed rebuild for the UI to properly update
+        Future.delayed(const Duration(milliseconds: 100), () {
+          if (mounted) setState(() {});
         });
         
         // Show confirmation
@@ -668,6 +834,29 @@ class ChatScreenState extends State<ChatScreen> {
             Text(mood, style: const TextStyle(fontSize: 16)),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildGreetingSection() {
+    return Padding(
+      padding: const EdgeInsets.all(20.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: const [
+          Text(
+            "Hello, what can I do for you today?",
+            style: TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          SizedBox(height: 10),
+          Text(
+            "Share your thoughts and feelings below",
+            style: TextStyle(fontSize: 18, color: Colors.grey),
+          ),
+        ],
       ),
     );
   }

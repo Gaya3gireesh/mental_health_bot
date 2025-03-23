@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'dart:io' show Platform;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:mental_health_bot/chat_screen.dart';
 import 'home_screen.dart';
 import 'login_screen.dart';
 
@@ -74,7 +75,7 @@ class _SignupScreenState extends State<SignupScreen> {
         Navigator.pushAndRemoveUntil(
           context,
           MaterialPageRoute(
-            builder: (context) => HomeScreen(userId: responseData['user_id'].toString()),
+            builder: (context) => ChatScreen(),
           ),
           (route) => false,
         );
