@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:mental_health_bot/therapist_page.dart';
 import 'message.dart';
 import 'resource_model.dart';
 import 'widgets/mood_island.dart'; // Add this import
@@ -347,19 +348,10 @@ class ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateMi
         currentIndex: 0,
         onTap: (index) {
           if (index == 1) {
-            // Navigate to therapist connection page
+            // Navigate to therapist page
             Navigator.push(
               context,
-              MaterialPageRoute(
-                builder: (context) => Scaffold(
-                  appBar: AppBar(
-                    title: const Text('Therapist Connection'),
-                  ),
-                  body: const Center(
-                    child: Text('Therapist Connection Page'),
-                  ),
-                ),
-              ),
+              MaterialPageRoute(builder: (context) => const TherapistPage()),
             );
           }
         },
