@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'dart:io';
 
 class Therapist {
   final int id;
@@ -7,8 +11,6 @@ class Therapist {
   final String specialization;
   final int experience;
   final String contact;
-  final String? photoUrl;
-  final String? bio;
 
   Therapist({
     required this.id,
@@ -16,9 +18,17 @@ class Therapist {
     required this.specialization,
     required this.experience,
     required this.contact,
-    this.photoUrl,
-    this.bio,
   });
+
+  factory Therapist.fromJson(Map<String, dynamic> json) {
+    return Therapist(
+      id: json['id'],
+      name: json['name'],
+      specialization: json['specialization'],
+      experience: json['experience'],
+      contact: json['contact'],
+    );
+  }
 }
 
 class TherapistPage extends StatefulWidget {
@@ -29,54 +39,66 @@ class TherapistPage extends StatefulWidget {
 }
 
 class TherapistPageState extends State<TherapistPage> {
-  // Sample list of therapists
-  final List<Therapist> _therapists = [
-    Therapist(
-      id: 1,
-      name: "Dr. Sarah Johnson",
-      specialization: "Anxiety & Depression",
-      experience: 8,
-      contact: "sarah.johnson@example.com",
-      photoUrl: "https://randomuser.me/api/portraits/women/44.jpg",
-      bio: "Dr. Johnson specializes in cognitive behavioral therapy for anxiety and depression. She has helped hundreds of patients develop effective coping strategies.",
-    ),
-    Therapist(
-      id: 2,
-      name: "Dr. Michael Chen",
-      specialization: "Trauma & PTSD",
-      experience: 12,
-      contact: "michael.chen@example.com",
-      photoUrl: "https://randomuser.me/api/portraits/men/32.jpg",
-      bio: "With over a decade of experience in trauma therapy, Dr. Chen uses a combination of EMDR and cognitive processing therapy to help patients heal.",
-    ),
-    Therapist(
-      id: 3,
-      name: "Dr. Emily Rodriguez",
-      specialization: "Family Therapy",
-      experience: 10,
-      contact: "emily.rodriguez@example.com",
-      photoUrl: "https://randomuser.me/api/portraits/women/68.jpg",
-      bio: "Dr. Rodriguez helps families improve communication and resolve conflicts through structured therapy sessions and evidence-based interventions.",
-    ),
-    Therapist(
-      id: 4,
-      name: "Dr. James Wilson",
-      specialization: "Cognitive Behavioral Therapy",
-      experience: 15,
-      contact: "james.wilson@example.com",
-      photoUrl: "https://randomuser.me/api/portraits/men/52.jpg",
-      bio: "A specialist in CBT, Dr. Wilson helps patients challenge negative thought patterns and develop healthier perspectives on life's challenges.",
-    ),
-    Therapist(
-      id: 5,
-      name: "Dr. Aisha Patel",
-      specialization: "Stress Management",
-      experience: 7,
-      contact: "aisha.patel@example.com",
-      photoUrl: "https://randomuser.me/api/portraits/women/37.jpg",
-      bio: "Dr. Patel focuses on helping clients develop practical stress management techniques and build resilience for better mental wellbeing.",
-    ),
-  ];
+  List<Therapist> _therapists = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTherapists();
+  }
+
+  Future<void> _loadTherapists() async {
+    try {
+      String baseUrl = dotenv.env['API_BASE_URL'] ?? 'http://10.0.2.2:5000';
+      print('Using base URL: $baseUrl'); // Debug base URL
+
+      if (Platform.isIOS && baseUrl.contains('10.0.2.2')) {
+        baseUrl = baseUrl.replaceAll('10.0.2.2', 'localhost');
+        print('Modified URL for iOS: $baseUrl'); // Debug iOS URL modification
+      }
+
+      print('Attempting to fetch therapists from: $baseUrl/therapists'); // Debug full URL
+      final response = await http.get(Uri.parse('$baseUrl/therapists'));
+      
+      print('Response status: ${response.statusCode}');
+      print('Response headers: ${response.headers}');
+      print('Raw response body: ${response.body}');
+      
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body);
+        print('Decoded data length: ${data.length}'); // Debug data length
+        print('First therapist data: ${data.isNotEmpty ? data[0] : "No therapists"}'); // Debug first item
+        
+        setState(() {
+          _therapists = data.map((json) => Therapist.fromJson(json)).toList();
+          print('Parsed therapists length: ${_therapists.length}'); // Debug parsed length
+          if (_therapists.isNotEmpty) {
+            print('First parsed therapist: ${_therapists[0].name}'); // Debug first parsed therapist
+          }
+          _isLoading = false;
+        });
+      } else {
+        print('Error status code: ${response.statusCode}'); // Debug error status
+        print('Error response: ${response.body}'); // Debug error response
+        throw Exception('Failed to load therapists: ${response.statusCode}');
+      }
+    } catch (e, stackTrace) {
+      print('Error loading therapists: $e'); // For debugging
+      print('Stack trace: $stackTrace'); // Added stack trace
+      setState(() {
+        _isLoading = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading therapists: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -91,14 +113,16 @@ class TherapistPageState extends State<TherapistPage> {
         centerTitle: true,
         iconTheme: const IconThemeData(color: Colors.black),
       ),
-      body: Column(
-        children: [
-          _buildHeader(),
-          Expanded(
-            child: _buildTherapistList(),
-          ),
-        ],
-      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                _buildHeader(),
+                Expanded(
+                  child: _buildTherapistList(),
+                ),
+              ],
+            ),
     );
   }
 
@@ -149,32 +173,6 @@ class TherapistPageState extends State<TherapistPage> {
         borderRadius: BorderRadius.circular(16),
         child: Column(
           children: [
-            // Therapist photo
-            SizedBox(
-              height: 180,
-              width: double.infinity,
-              child: ClipRRect(
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                child: therapist.photoUrl != null
-                    ? Image.network(
-                        therapist.photoUrl!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) => Container(
-                          color: Colors.blue.shade100,
-                          child: const Center(
-                            child: Icon(Icons.person, size: 50, color: Colors.blue),
-                          ),
-                        ),
-                      )
-                    : Container(
-                        color: Colors.blue.shade100,
-                        child: const Center(
-                          child: Icon(Icons.person, size: 50, color: Colors.blue),
-                        ),
-                      ),
-              ),
-            ),
-            
             // Therapist info
             Padding(
               padding: const EdgeInsets.all(16.0),
@@ -297,31 +295,6 @@ class TherapistPageState extends State<TherapistPage> {
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Profile image
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(70),
-                          child: SizedBox(
-                            width: 100,
-                            height: 100,
-                            child: therapist.photoUrl != null
-                                ? Image.network(
-                                    therapist.photoUrl!,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (context, error, stackTrace) => Container(
-                                      color: Colors.blue.shade100,
-                                      child: const Center(
-                                        child: Icon(Icons.person, size: 40, color: Colors.blue),
-                                      ),
-                                    ),
-                                  )
-                                : Container(
-                                    color: Colors.blue.shade100,
-                                    child: const Center(
-                                      child: Icon(Icons.person, size: 40, color: Colors.blue),
-                                    ),
-                                  ),
-                          ),
-                        ),
                         const SizedBox(width: 20),
                         // Name and details
                         Expanded(
@@ -354,25 +327,6 @@ class TherapistPageState extends State<TherapistPage> {
                           ),
                         ),
                       ],
-                    ),
-                    
-                    const SizedBox(height: 24),
-                    
-                    // About section
-                    const Text(
-                      "About",
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      therapist.bio ?? "No bio available",
-                      style: TextStyle(
-                        height: 1.5,
-                        color: Colors.grey[800],
-                      ),
                     ),
                     
                     const SizedBox(height: 24),

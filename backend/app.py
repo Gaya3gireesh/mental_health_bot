@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from flask_cors import CORS
 from difflib import SequenceMatcher
 import database
+from database import get_all_therapists
 
 # Load environment variables (for API keys)
 load_dotenv()
@@ -502,6 +503,16 @@ def list_users():
             return jsonify({"success": False, "error": str(e)})
     else:
         return jsonify({"success": False, "error": "Database connection failed"})
+
+# Add this new route
+@app.route('/therapists', methods=['GET'])
+def get_therapists():
+    try:
+        therapists = get_all_therapists()
+        return jsonify(therapists)
+    except Exception as e:
+        print(f"Error getting therapists: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
