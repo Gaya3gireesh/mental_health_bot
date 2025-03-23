@@ -1,8 +1,22 @@
 import 'package:flutter/material.dart';
 import 'chat_screen.dart';
 
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+class HomeScreen extends StatefulWidget {
+  final String? userId;
+  
+  const HomeScreen({super.key, this.userId});
+  
+  @override
+  HomeScreenState createState() => HomeScreenState();
+}
+
+class HomeScreenState extends State<HomeScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Debug log the userId
+    print("HomeScreen initialized with userId: ${widget.userId ?? 'null'}");
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -61,13 +75,20 @@ class HomeScreen extends StatelessWidget {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
+          // Log the userId before navigating
+          print("Opening ChatScreen with userId: ${widget.userId ?? 'null'}");
+          
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => const ChatScreen(),
+              builder: (context) => ChatScreen(
+                initialEmotion: 'Neutral', // Changed from 'defaultEmotion' to 'Neutral'
+                userId: widget.userId,
+              ),
             ),
           );
         },
+        tooltip: 'Chat without selecting emotion',
         child: const Icon(Icons.chat),
       ),
     );
@@ -83,10 +104,16 @@ class HomeScreen extends StatelessWidget {
       elevation: 4,
       child: InkWell(
         onTap: () {
+          // Log the userId and emotion before navigating
+          print("Opening ChatScreen with emotion: $emotion, userId: ${widget.userId ?? 'null'}");
+          
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => ChatScreen(initialEmotion: emotion),
+              builder: (context) => ChatScreen(
+                initialEmotion: emotion,
+                userId: widget.userId,
+              ),
             ),
           );
         },
