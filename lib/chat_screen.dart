@@ -139,67 +139,6 @@ class ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  // Enhanced _saveMoodToDatabase method
-  Future<bool> _saveMoodToDatabase() async {
-    // Get a user ID to work with
-    String? userIdToUse = widget.userId;
-    
-    // If userId is null, use a test ID for debugging
-    if (userIdToUse == null || userIdToUse.isEmpty) {
-      print("WARNING: Using test userId because real userId is null or empty");
-      userIdToUse = "test_user_1";
-    } else {
-      print("Using provided userId: $userIdToUse");
-    }
-    
-    if (_currentMood == null || _currentMood!.isEmpty) {
-      print("Cannot save mood: currentMood is null or empty");
-      return false;
-    }
-    
-    String baseUrl = dotenv.env['API_BASE_URL'] ?? 'http://10.0.2.2:5000';
-    if (Platform.isIOS && baseUrl.contains('10.0.2.2')) {
-      baseUrl = baseUrl.replaceAll('10.0.2.2', 'localhost');
-    }
-    
-    final url = '$baseUrl/user/$userIdToUse/mood';
-    final payload = {'mood': _currentMood};
-    
-    print('Attempting to save mood to database:');
-    print('URL: $url');
-    print('Payload: $payload');
-    
-    try {
-      final response = await http.post(
-        Uri.parse(url),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(payload),
-      ).timeout(
-        const Duration(seconds: 10),
-        onTimeout: () {
-          print('Mood save timeout after 10 seconds');
-          throw TimeoutException('Connection timed out.');
-        },
-      );
-      
-      print('Response received:');
-      print('Status code: ${response.statusCode}');
-      print('Response body: ${response.body}');
-      
-      if (response.statusCode == 200) {
-        print('✓ Mood saved successfully: $_currentMood');
-        return true;
-      } else {
-        print('✗ Failed to save mood: ${response.statusCode}');
-        print('Error response: ${response.body}');
-        return false;
-      }
-    } catch (e) {
-      print('✗ Exception while saving mood: $e');
-      return false;
-    }
-  }
-
   void _addBotMessage(String text) {
     setState(() {
       _messages.add(Message(text: text, isUser: false));
@@ -232,11 +171,6 @@ class ChatScreenState extends State<ChatScreen> {
         setState(() {
           _currentMood = extractedMood;
           print("Updated current mood to: $_currentMood");
-        });
-        
-        // Try to save mood immediately
-        _saveMoodToDatabase().then((success) {
-          print("Immediate mood save ${success ? 'successful' : 'failed'}");
         });
       }
     }).catchError((error) {
@@ -312,16 +246,6 @@ class ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return WillPopScope(
       onWillPop: () async {
-        // Save mood before popping the screen
-        if (_currentMood != null) {
-          print("WillPopScope: Saving mood before navigating back: $_currentMood");
-          
-          // Wait explicitly for the save to complete
-          bool success = await _saveMoodToDatabase();
-          print("WillPopScope: Save completed with result: $success");
-        } else {
-          print("WillPopScope: Not saving - currentMood is null");
-        }
         return true; // Allow the screen to be popped
       },
       child: Scaffold(
@@ -355,23 +279,11 @@ class ChatScreenState extends State<ChatScreen> {
             // Add this to your AppBar actions list
             IconButton(
               icon: const Icon(Icons.save),
-              tooltip: 'Save Current Mood',
+              tooltip: 'Current Mood',
               onPressed: () {
-                if (widget.userId != null && _currentMood != null) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Saving mood: $_currentMood')),
-                  );
-                  _saveMoodToDatabase().then((success) {
-                    if (!mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(success ? 'Mood saved!' : 'Failed to save mood')),
-                    );
-                  });
-                } else {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('No mood to save or not logged in')),
-                  );
-                }
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Current mood: $_currentMood')),
+                );
               },
             ),
             // Inside your AppBar actions list in build method, add this new button:
@@ -679,22 +591,6 @@ class ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
-    // Add debug print
-    print("ChatScreen is being disposed, current mood: $_currentMood");
-    
-    // Save mood to database when chat is closed
-    if (widget.userId != null && _currentMood != null) {
-      print("Attempting to save mood to database before disposal");
-      // Use a synchronous call to ensure it completes before disposal
-      _saveMoodToDatabase().then((_) {
-        print("Mood save completed");
-      }).catchError((error) {
-        print("Error saving mood during disposal: $error");
-      });
-    } else {
-      print("Not saving mood - userId: ${widget.userId}, currentMood: $_currentMood");
-    }
-    
     _textController.dispose();
     super.dispose();
   }
@@ -762,11 +658,6 @@ class ChatScreenState extends State<ChatScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Mood set to: $mood')),
         );
-        
-        // Save the manually set mood
-        _saveMoodToDatabase().then((success) {
-          print("Manual mood save ${success ? 'successful' : 'failed'}");
-        });
       },
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8.0),
