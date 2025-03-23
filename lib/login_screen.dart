@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mental_health_bot/chat_screen.dart';
 import 'home_screen.dart';
 import 'signup_screen.dart';
 
@@ -69,7 +70,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       Navigator.pushReplacement(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => const HomeScreen(),
+                          builder: (context) => const ChatScreen(),
                         ),
                       );
                     }
