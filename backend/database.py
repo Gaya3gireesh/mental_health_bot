@@ -8,10 +8,21 @@ def create_connection():
     # Use the database in the root directory instead of backend
     root_dir = os.path.dirname(os.path.dirname(__file__))  # Go up one level to the project root
     db_path = os.path.join(root_dir, 'sample.db')
+    
+    # Debug prints
+    print(f"Current file location: {__file__}")
+    print(f"Root directory: {root_dir}")
+    print(f"Attempting to connect to DB at: {db_path}")
+    print(f"DB file exists: {os.path.exists(db_path)}")
+    
     conn = None
     try:
         conn = sqlite3.connect(db_path)
-        print(f"Successfully connected to SQLite database at {db_path}")
+        cursor = conn.cursor()
+        # Verify we can query the database
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = cursor.fetchall()
+        print(f"Available tables in database: {tables}")
         return conn
     except Error as e:
         print(f"Error connecting to database: {e}")
@@ -33,8 +44,7 @@ def init_db():
                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                                 email TEXT UNIQUE NOT NULL,
                                 password TEXT NOT NULL,
-                                name TEXT NOT NULL,
-                                mood TEXT
+                                name TEXT NOT NULL
                             ); """
                 
                 cursor.execute(users_table)
@@ -43,6 +53,19 @@ def init_db():
             else:
                 print("Users table already exists")
                 
+            # Create therapists table
+            therapists_table = """ CREATE TABLE IF NOT EXISTS therapists (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                name TEXT NOT NULL,
+                                specialization TEXT NOT NULL,
+                                experience INTEGER NOT NULL,
+                                contact TEXT NOT NULL
+                            ); """
+            
+            cursor.execute(therapists_table)
+            conn.commit()
+            print("Created therapists table")
+            
             conn.close()
             return True
         except Error as e:
@@ -99,8 +122,7 @@ def get_user_by_email(email):
                     "id": row[0],
                     "email": row[1],
                     "password": row[2],
-                    "name": row[3],
-                    "mood": row[4]
+                    "name": row[3]
                 }
             else:
                 return None
@@ -110,6 +132,29 @@ def get_user_by_email(email):
             return None
     else:
         return None
+
+def get_all_therapists():
+    """Get all therapists from database"""
+    conn = create_connection()
+    if conn is not None:
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT id, name, specialization, experience, contact FROM therapists")
+            rows = cur.fetchall()
+            conn.close()
+            
+            return [{
+                "id": row[0],
+                "name": row[1],
+                "specialization": row[2],
+                "experience": row[3],
+                "contact": row[4]
+            } for row in rows]
+        except Error as e:
+            print(f"Error getting therapists: {e}")
+            conn.close()
+            return []
+    return []
 
 # Initialize the DB when the module is imported
 init_db()
