@@ -10,6 +10,7 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 from flask_cors import CORS
 from difflib import SequenceMatcher
+import database
 
 # Load environment variables (for API keys)
 load_dotenv()
@@ -440,6 +441,135 @@ def get_resources():
         "resources": resources,
         "updated": refresh
     })
+
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.json
+    if not data:
+        return jsonify({"success": False, "error": "No data provided"}), 400
+    
+    # Extract required fields
+    email = data.get('email')
+    password = data.get('password')
+    name = data.get('name')
+    
+    print(f"Attempting to register user: {email}, {name}")
+    
+    if not all([email, password, name]):
+        print("Missing required fields")
+        return jsonify({"success": False, "error": "Missing required fields"}), 400
+    
+    # Create new user
+    try:
+        result = database.create_user(email, password, name)
+        print(f"Registration result: {result}")
+        
+        if result["success"]:
+            return jsonify({
+                "success": True, 
+                "message": "User registered successfully",
+                "user_id": result["user_id"]
+            }), 201
+        else:
+            return jsonify({
+                "success": False, 
+                "error": result.get("error", "Registration failed")
+            }), 400
+    except Exception as e:
+        print(f"Exception during registration: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": f"Registration error: {str(e)}"
+        }), 500
+
+# Add this new endpoint to list users (for debugging only)
+@app.route('/list_users', methods=['GET'])
+def list_users():
+    conn = database.create_connection()
+    if conn is not None:
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT id, email, name FROM users")
+            rows = cur.fetchall()
+            conn.close()
+            
+            users = [{"id": row[0], "email": row[1], "name": row[2]} for row in rows]
+            return jsonify({"success": True, "users": users})
+        except Exception as e:
+            conn.close()
+            return jsonify({"success": False, "error": str(e)})
+    else:
+        return jsonify({"success": False, "error": "Database connection failed"})
+
+# Add these endpoints to your existing Flask app
+
+# Get user's current mood
+@app.route('/user/<user_id>/mood', methods=['GET'])
+def get_user_mood(user_id):
+    conn = database.create_connection()
+    if conn is not None:
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT mood FROM users WHERE id = ?", (user_id,))
+            row = cur.fetchone()
+            conn.close()
+            
+            if row and row[0]:
+                return jsonify({
+                    "success": True, 
+                    "mood": row[0]
+                })
+            else:
+                return jsonify({
+                    "success": False, 
+                    "error": "No mood set or user not found"
+                }), 404
+        except Exception as e:
+            conn.close()
+            return jsonify({
+                "success": False, 
+                "error": str(e)
+            }), 500
+    else:
+        return jsonify({
+            "success": False, 
+            "error": "Database connection failed"
+        }), 500
+
+# Update user's mood
+@app.route('/user/<user_id>/mood', methods=['POST'])
+def update_user_mood(user_id):
+    data = request.json
+    if not data or 'mood' not in data:
+        return jsonify({"success": False, "error": "No mood provided"}), 400
+    
+    mood = data['mood']
+    
+    conn = database.create_connection()
+    if conn is not None:
+        try:
+            cur = conn.cursor()
+            cur.execute("UPDATE users SET mood = ? WHERE id = ?", (mood, user_id))
+            conn.commit()
+            conn.close()
+            
+            return jsonify({
+                "success": True, 
+                "message": "Mood updated successfully"
+            })
+        except Exception as e:
+            conn.close()
+            return jsonify({
+                "success": False, 
+                "error": str(e)
+            }), 500
+    else:
+        return jsonify({
+            "success": False, 
+            "error": "Database connection failed"
+        }), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

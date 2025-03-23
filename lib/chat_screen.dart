@@ -3,14 +3,17 @@ import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'message.dart';
 import 'resource_model.dart';
+import 'widgets/mood_island.dart'; // Add this import
 
 class ChatScreen extends StatefulWidget {
   final String? initialEmotion;
+  final String? userId;
 
-  const ChatScreen({super.key, this.initialEmotion});
+  const ChatScreen({super.key, this.initialEmotion, this.userId});
 
   @override
   ChatScreenState createState() => ChatScreenState();
@@ -21,20 +24,29 @@ class ChatScreenState extends State<ChatScreen> {
   final _textController = TextEditingController();
   bool _isLoading = false;
   List<MentalHealthResource> _resources = [];
-  bool _resourcesLoaded = false;
   bool _isLoadingResources = false;
+  bool _resourcesLoaded = false;
+  String? _currentMood;
 
   @override
   void initState() {
     super.initState();
-    if (widget.initialEmotion != null) {
+    
+    // Set initial mood if provided
+    if (widget.initialEmotion != null && widget.initialEmotion!.isNotEmpty) {
+      _currentMood = widget.initialEmotion;
+      print("Setting initial mood from emotion: $_currentMood");
+      
       _addBotMessage(
           "I understand you're feeling ${widget.initialEmotion}. How can I help you today?");
     } else {
+      _currentMood = 'Neutral'; // Default mood
+      print("Setting default mood: $_currentMood");
+      
       _addBotMessage("Hi! How can I help you today?");
     }
     
-    // Load resources when app starts
+    // Load resources automatically when app starts
     _loadResources();
   }
   
@@ -43,6 +55,17 @@ class ChatScreenState extends State<ChatScreen> {
     
     setState(() {
       _isLoadingResources = true;
+      
+      // Only create placeholders if we don't have resources yet
+      if (_resources.isEmpty) {
+        _resources = List.generate(5, (index) => 
+          MentalHealthResource(
+            title: "Loading Resource ${index + 1}...",
+            content: "Please wait while we load resources...",
+            category: "Loading",
+          )
+        );
+      }
     });
     
     String baseUrl = dotenv.env['API_BASE_URL'] ?? 'http://10.0.2.2:5000';
@@ -51,33 +74,45 @@ class ChatScreenState extends State<ChatScreen> {
     }
     
     try {
+      // Only refresh from server if resources are empty or explicitly requested
+      bool shouldRefresh = refresh || _resources.isEmpty || (_resources.length == 5 && _resources[0].title.contains("Loading"));
+      
       final response = await http.get(
-        Uri.parse('$baseUrl/resources?refresh=${refresh}'),
+        Uri.parse('$baseUrl/resources?refresh=${shouldRefresh}'),
       ).timeout(
-        const Duration(seconds: 30), // Longer timeout for scraping
+        const Duration(seconds: 15),
         onTimeout: () {
-          throw TimeoutException('Connection timed out. Web scraping might be taking too long.');
+          throw TimeoutException('Connection timed out. Please check your server.');
         },
       );
       
       if (response.statusCode == 200) {
         final Map<String, dynamic> responseData = jsonDecode(response.body);
-        final List<dynamic> data = responseData['resources'];
+        final List<dynamic> data = responseData['resources'] ?? [];
         
         setState(() {
           _resources = data.map((json) => MentalHealthResource(
-            title: json['title'],
-            content: json['content'],
+            title: json['title'] ?? "Untitled Resource",
+            content: json['content'] ?? "No content available.",
+            category: json['category'] ?? 'General',
           )).toList();
           _resourcesLoaded = true;
           _isLoadingResources = false;
         });
         
-        // Show whether resources were freshly scraped
-        if (responseData['updated'] == true) {
-          if (!mounted) return;
+        // If this was explicitly refreshed, show a confirmation
+        if (refresh && mounted) {
+          // Safe way to extract status information
+          final status = responseData['status'];
+          final inProgress = status is Map && status.containsKey('in_progress') ? 
+              status['in_progress'] ?? false : false;
+              
+          final message = inProgress 
+              ? 'Resources are being updated in the background'
+              : 'Resources have been updated';
+              
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Resources have been updated with fresh content')),
+            SnackBar(content: Text(message)),
           );
         }
       } else {
@@ -92,10 +127,76 @@ class ChatScreenState extends State<ChatScreen> {
         _isLoadingResources = false;
       });
       
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error loading resources: ${e.toString().substring(0, 100)}')),
+      // Only show an error message if it was an explicit refresh
+      if (refresh && mounted) {
+        // Safe error message without substring that was causing problems
+        String errorMsg = 'Error loading resources';
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errorMsg)),
+        );
+      }
+    }
+  }
+
+  // Enhanced _saveMoodToDatabase method
+  Future<bool> _saveMoodToDatabase() async {
+    // Get a user ID to work with
+    String? userIdToUse = widget.userId;
+    
+    // If userId is null, use a test ID for debugging
+    if (userIdToUse == null || userIdToUse.isEmpty) {
+      print("WARNING: Using test userId because real userId is null or empty");
+      userIdToUse = "test_user_1";
+    } else {
+      print("Using provided userId: $userIdToUse");
+    }
+    
+    if (_currentMood == null || _currentMood!.isEmpty) {
+      print("Cannot save mood: currentMood is null or empty");
+      return false;
+    }
+    
+    String baseUrl = dotenv.env['API_BASE_URL'] ?? 'http://10.0.2.2:5000';
+    if (Platform.isIOS && baseUrl.contains('10.0.2.2')) {
+      baseUrl = baseUrl.replaceAll('10.0.2.2', 'localhost');
+    }
+    
+    final url = '$baseUrl/user/$userIdToUse/mood';
+    final payload = {'mood': _currentMood};
+    
+    print('Attempting to save mood to database:');
+    print('URL: $url');
+    print('Payload: $payload');
+    
+    try {
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(payload),
+      ).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          print('Mood save timeout after 10 seconds');
+          throw TimeoutException('Connection timed out.');
+        },
       );
+      
+      print('Response received:');
+      print('Status code: ${response.statusCode}');
+      print('Response body: ${response.body}');
+      
+      if (response.statusCode == 200) {
+        print('✓ Mood saved successfully: $_currentMood');
+        return true;
+      } else {
+        print('✗ Failed to save mood: ${response.statusCode}');
+        print('Error response: ${response.body}');
+        return false;
+      }
+    } catch (e) {
+      print('✗ Exception while saving mood: $e');
+      return false;
     }
   }
 
@@ -121,6 +222,23 @@ class ChatScreenState extends State<ChatScreen> {
         _isLoading = false;
         _addBotMessage(response);
       });
+      
+      // More flexible mood detection - check for any mood word
+      final extractedMood = _extractMoodFromResponse(response);
+      if (extractedMood.isNotEmpty) {
+        print("Detected mood in response: $extractedMood");
+        print("Full response: $response");
+        
+        setState(() {
+          _currentMood = extractedMood;
+          print("Updated current mood to: $_currentMood");
+        });
+        
+        // Try to save mood immediately
+        _saveMoodToDatabase().then((success) {
+          print("Immediate mood save ${success ? 'successful' : 'failed'}");
+        });
+      }
     }).catchError((error) {
       setState(() {
         _isLoading = false;
@@ -145,10 +263,11 @@ class ChatScreenState extends State<ChatScreen> {
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'message': message,
-          'emotion': widget.initialEmotion ?? '',
+          'emotion': _currentMood ?? widget.initialEmotion ?? '', // Use current mood if available
+          'user_id': widget.userId
         }),
       ).timeout(
-        const Duration(seconds: 10),
+        const Duration(seconds: 15), // Increased timeout
         onTimeout: () {
           throw TimeoutException('Connection timed out. Please check your server.');
         },
@@ -156,7 +275,27 @@ class ChatScreenState extends State<ChatScreen> {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        return data['response'];
+        final botResponse = data['response'];
+        
+        // Add debug logging
+        print("Bot response received: $botResponse");
+        print("Looking for mood keywords in response...");
+        
+        // If message is asking about emotions or similar, add a mood prompt
+        final lowerMessage = message.toLowerCase();
+        if (lowerMessage.contains("feel") || 
+            lowerMessage.contains("mood") ||
+            lowerMessage.contains("emotion") ||
+            lowerMessage.contains("how am i") ||
+            lowerMessage.contains("how are you")) {
+          
+          // For these types of questions, force the bot to mention the current mood
+          // This will help trigger mood detection
+          final moodPrompt = "Based on our conversation, you seem to be feeling $_currentMood. ";
+          return moodPrompt + botResponse;
+        }
+        
+        return botResponse;
       } else {
         throw Exception('Failed to load response: ${response.statusCode}');
       }
@@ -171,167 +310,271 @@ class ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Chat with Support'),
-        actions: [
-          // Add this test button to the app bar
-          IconButton(
-            icon: const Icon(Icons.network_check),
-            tooltip: 'Test Connection',
-            onPressed: () async {
-              try {
-                final response = await http.get(
-                  Uri.parse('${dotenv.env['API_BASE_URL'] ?? 'http://10.0.2.2:5000'}/test_connection')
-                );
-                if (response.statusCode == 200) {
-                  final data = json.decode(response.body);
+    return WillPopScope(
+      onWillPop: () async {
+        // Save mood before popping the screen
+        if (_currentMood != null) {
+          print("WillPopScope: Saving mood before navigating back: $_currentMood");
+          
+          // Wait explicitly for the save to complete
+          bool success = await _saveMoodToDatabase();
+          print("WillPopScope: Save completed with result: $success");
+        } else {
+          print("WillPopScope: Not saving - currentMood is null");
+        }
+        return true; // Allow the screen to be popped
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Chat with Support'),
+          actions: [
+            // Add this test button to the app bar
+            IconButton(
+              icon: const Icon(Icons.network_check),
+              tooltip: 'Test Connection',
+              onPressed: () async {
+                try {
+                  final response = await http.get(
+                    Uri.parse('${dotenv.env['API_BASE_URL'] ?? 'http://10.0.2.2:5000'}/test_connection')
+                  );
+                  if (response.statusCode == 200) {
+                    final data = json.decode(response.body);
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Backend connected: ${data['message'] ?? "OK"}')),
+                    );
+                  }
+                } catch (e) {
                   if (!mounted) return;
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Backend connected: ${data['message']}')),
+                    SnackBar(content: Text('Connection error: Check your server')),
                   );
                 }
-              } catch (e) {
-                if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Connection error: $e')),
-                );
-              }
-            },
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(8.0),
-              itemCount: _messages.length,
-              itemBuilder: (context, index) {
-                final message = _messages[index];
-                return _buildMessage(message);
               },
             ),
-          ),
-          if (_isLoading) 
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 8.0),
-              child: const Center(child: CircularProgressIndicator()),
+            // Add this to your AppBar actions list
+            IconButton(
+              icon: const Icon(Icons.save),
+              tooltip: 'Save Current Mood',
+              onPressed: () {
+                if (widget.userId != null && _currentMood != null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Saving mood: $_currentMood')),
+                  );
+                  _saveMoodToDatabase().then((success) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(success ? 'Mood saved!' : 'Failed to save mood')),
+                    );
+                  });
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('No mood to save or not logged in')),
+                  );
+                }
+              },
             ),
-          _buildMessageComposer(),
-        ],
-      ),
-      // Add this to position the floating action button higher
-      floatingActionButtonLocation: const CustomFloatingActionButtonLocation(80),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _showResourcesDialog(),
-        tooltip: 'Mental Health Resources',
-        child: const Icon(Icons.menu_book),
+            // Inside your AppBar actions list in build method, add this new button:
+
+            IconButton(
+              icon: const Icon(Icons.mood),
+              tooltip: 'Set Current Mood',
+              onPressed: () {
+                _showMoodSelectionDialog();
+              },
+            ),
+          ],
+        ),
+        body: Column(
+          children: [
+            // Make sure this part of your build method is correct
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: MoodIsland(currentMood: _currentMood ?? 'Neutral'),
+            ),
+            
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.all(8.0),
+                itemCount: _messages.length,
+                itemBuilder: (context, index) {
+                  final message = _messages[index];
+                  return _buildMessage(message);
+                },
+              ),
+            ),
+            if (_isLoading) 
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 8.0),
+                child: const Center(child: CircularProgressIndicator()),
+              ),
+            _buildMessageComposer(),
+          ],
+        ),
+        // Add this to position the floating action button higher
+        floatingActionButtonLocation: const CustomFloatingActionButtonLocation(80),
+        floatingActionButton: FloatingActionButton(
+          onPressed: () {
+            // Show a loading snackbar
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Loading resources...'),
+                duration: Duration(seconds: 1),
+              ),
+            );
+            // Then show the resources dialog
+            _showResourcesDialog();
+          },
+          tooltip: 'Mental Health Resources',
+          child: const Icon(Icons.menu_book),
+        ),
       ),
     );
   }
   
-  void _showResourcesDialog({bool refresh = false}) async {
-    // Show loading dialog first if refreshing
-    if (refresh) {
+  void _showResourcesDialog() {
+    // If resources are loaded and not loading, show the dialog immediately
+    if (_resourcesLoaded && !_isLoadingResources) {
       showDialog(
         context: context,
-        barrierDismissible: false,
         builder: (BuildContext context) {
-          return AlertDialog(
-            title: const Text('Updating Resources'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: const [
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('Fetching fresh content from mental health websites...')
-              ],
-            ),
-          );
-        },
+          return _buildResourcesDialog();
+        }
       );
+      return;
     }
     
-    // Load/refresh resources
-    await _loadResources(refresh: refresh);
-    
-    // Close loading dialog if it was shown
-    if (refresh && mounted && Navigator.of(context).canPop()) {
-      Navigator.of(context).pop();
-    }
-    
-    // Show resources dialog
-    if (mounted) {
-      showDialog(
-        context: context,
-        builder: (BuildContext context) {
-          return AlertDialog(
-            titlePadding: EdgeInsets.zero,
-            contentPadding: EdgeInsets.zero,
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Custom title bar
-                Container(
-                  padding: const EdgeInsets.fromLTRB(24, 24, 16, 8),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Educational Resources',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      IconButton(
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                        icon: const Icon(Icons.refresh),
-                        tooltip: 'Refresh Content',
-                        onPressed: () {
-                          Navigator.of(context).pop();
-                          _showResourcesDialog(refresh: true);
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-                // Content
-                Container(
-                  height: 400,
-                  width: double.maxFinite,
-                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 0),
-                  child: _resourcesLoaded ? 
-                    ListView.builder(
-                      itemCount: _resources.length,
-                      itemBuilder: (context, index) {
-                        return ListTile(
-                          title: Text(_resources[index].title),
-                          leading: const Icon(Icons.article),
-                          onTap: () => _showResourceContent(_resources[index]),
-                        );
-                      },
-                    ) : 
-                    const Center(child: CircularProgressIndicator()),
-                ),
-              ],
-            ),
-            // Actions
-            actions: <Widget>[
-              TextButton(
-                child: const Text('Close'),
-                onPressed: () {
-                  Navigator.of(context).pop();
-                },
-              ),
+    // If resources are currently loading (including from initState), show a loading dialog
+    // that will automatically be replaced when loading is complete
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Loading Resources'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Please wait while we load mental health resources...')
             ],
-          );
-        },
-      );
+          ),
+        );
+      },
+    );
+    
+    // Keep track of this specific request
+    bool dialogHandled = false;
+    
+    // Check if resources are already loading
+    if (_isLoadingResources) {
+      // Create a timer to periodically check if loading is complete
+      Timer.periodic(const Duration(milliseconds: 500), (timer) {
+        // If resources are loaded and timer is still active
+        if (mounted && !dialogHandled && _resourcesLoaded && !_isLoadingResources) {
+          dialogHandled = true;
+          timer.cancel();
+          
+          // Replace the loading dialog with the resources dialog
+          if (Navigator.of(context).canPop()) {
+            Navigator.of(context).pop();
+            
+            showDialog(
+              context: context,
+              builder: (BuildContext context) {
+                return _buildResourcesDialog();
+              }
+            );
+          }
+        }
+        
+        // Cancel timer after a reasonable timeout (10 seconds)
+        if (timer.tick > 20) {
+          timer.cancel();
+          if (mounted && !dialogHandled) {
+            dialogHandled = true;
+            // Show error if loading took too long
+            if (Navigator.of(context).canPop()) {
+              Navigator.of(context).pop();
+            }
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Loading resources is taking longer than expected. Try again later.')),
+            );
+          }
+        }
+      });
+      return;
     }
+    
+    // If not currently loading, start loading resources
+    dialogHandled = false;
+    _loadResources(refresh: !_resourcesLoaded).then((_) {
+      // Once resources are loaded, close the loading dialog and show resources dialog
+      if (mounted && !dialogHandled) {
+        dialogHandled = true;
+        
+        // First pop the loading dialog
+        Navigator.of(context).pop();
+        
+        // Then show the resources dialog
+        showDialog(
+          context: context,
+          builder: (BuildContext context) {
+            return _buildResourcesDialog();
+          }
+        );
+      }
+    }).catchError((error) {
+      // Handle errors if resource loading fails
+      if (mounted && !dialogHandled) {
+        dialogHandled = true;
+        
+        // Close loading dialog
+        Navigator.of(context).pop();
+        
+        // Show error message
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to load resources. Please try again.')),
+        );
+      }
+    });
+  }
+  
+  Widget _buildResourcesDialog() {
+    return AlertDialog(
+      title: const Text('Mental Health Resources'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: _isLoadingResources
+            ? const Center(child: CircularProgressIndicator())
+            : _resources.isEmpty
+                ? const Text('No resources available.')
+                : ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _resources.length,
+                    itemBuilder: (context, index) {
+                      final resource = _resources[index];
+                      return ListTile(
+                        title: Text(resource.title),
+                        subtitle: Text(resource.category),
+                        onTap: () {
+                          Navigator.pop(context);
+                          _showResourceContent(resource);
+                        },
+                      );
+                    },
+                  ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          child: const Text('Close'),
+          onPressed: () {
+            Navigator.of(context).pop();
+          },
+        ),
+      ],
+    );
   }
   
   void _showResourceContent(MentalHealthResource resource) {
@@ -340,18 +583,41 @@ class ChatScreenState extends State<ChatScreen> {
       builder: (BuildContext context) {
         return AlertDialog(
           title: Text(resource.title),
-          content: Container(
-            constraints: const BoxConstraints(maxHeight: 400),
-            child: SingleChildScrollView(
-              child: Text(resource.content),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Show category chip
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12.0),
+                  child: Chip(
+                    label: Text(resource.category),
+                    backgroundColor: Colors.blue.shade100,
+                  ),
+                ),
+                // Show content text - safe handling
+                Text(
+                  resource.content.isEmpty ? 
+                    "No content available at this time." : 
+                    resource.content
+                ),
+              ],
             ),
           ),
-          actions: <Widget>[
+          actions: [
             TextButton(
-              child: const Text('Back'),
               onPressed: () {
+                // Close this dialog and show the resources list again
                 Navigator.of(context).pop();
+                showDialog(
+                  context: context,
+                  builder: (BuildContext context) {
+                    return _buildResourcesDialog();
+                  }
+                );
               },
+              child: const Text('Back'),
             ),
           ],
         );
@@ -407,6 +673,110 @@ class ChatScreenState extends State<ChatScreen> {
             onPressed: () => _handleSubmitted(_textController.text),
           ),
         ],
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    // Add debug print
+    print("ChatScreen is being disposed, current mood: $_currentMood");
+    
+    // Save mood to database when chat is closed
+    if (widget.userId != null && _currentMood != null) {
+      print("Attempting to save mood to database before disposal");
+      // Use a synchronous call to ensure it completes before disposal
+      _saveMoodToDatabase().then((_) {
+        print("Mood save completed");
+      }).catchError((error) {
+        print("Error saving mood during disposal: $error");
+      });
+    } else {
+      print("Not saving mood - userId: ${widget.userId}, currentMood: $_currentMood");
+    }
+    
+    _textController.dispose();
+    super.dispose();
+  }
+
+  // Move this method INSIDE the ChatScreenState class
+  String _extractMoodFromResponse(String response) {
+    // Make lowercase for case-insensitive matching
+    final lowerResponse = response.toLowerCase();
+    
+    // Map of mood keywords to return values
+    final Map<String, List<String>> moodKeywords = {
+      'Happy': ['happy', 'joy', 'glad', 'cheerful', 'delighted', 'pleased'],
+      'Sad': ['sad', 'unhappy', 'depressed', 'down', 'blue', 'gloomy'],
+      'Angry': ['angry', 'upset', 'frustrated', 'mad', 'furious', 'irritated'],
+      'Calm': ['calm', 'relaxed', 'peaceful', 'tranquil', 'serene'],
+      'Anxious': ['anxious', 'worried', 'nervous', 'stress', 'tense', 'uneasy'],
+      'Neutral': ['neutral', 'fine', 'okay', 'alright']
+    };
+    
+    // Find the first mood that matches any keyword
+    for (final entry in moodKeywords.entries) {
+      for (final keyword in entry.value) {
+        if (lowerResponse.contains(keyword)) {
+          print("Found mood keyword: $keyword, setting mood to: ${entry.key}");
+          return entry.key;
+        }
+      }
+    }
+    
+    // If no mood is found, don't change the current mood
+    return '';
+  }
+
+  // Add this new method to your ChatScreenState class
+
+  void _showMoodSelectionDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return SimpleDialog(
+          title: const Text('Select your current mood'),
+          children: <Widget>[
+            _buildMoodOption('Happy', '😊'),
+            _buildMoodOption('Sad', '😔'),
+            _buildMoodOption('Angry', '😡'),
+            _buildMoodOption('Calm', '😌'),
+            _buildMoodOption('Anxious', '😰'),
+            _buildMoodOption('Neutral', '😐'),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildMoodOption(String mood, String emoji) {
+    return SimpleDialogOption(
+      onPressed: () {
+        Navigator.pop(context);
+        setState(() {
+          _currentMood = mood;
+          print("Manually set mood to: $_currentMood");
+        });
+        
+        // Show confirmation
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Mood set to: $mood')),
+        );
+        
+        // Save the manually set mood
+        _saveMoodToDatabase().then((success) {
+          print("Manual mood save ${success ? 'successful' : 'failed'}");
+        });
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8.0),
+        child: Row(
+          children: [
+            Text(emoji, style: const TextStyle(fontSize: 24)),
+            const SizedBox(width: 16),
+            Text(mood, style: const TextStyle(fontSize: 16)),
+          ],
+        ),
       ),
     );
   }
