@@ -87,10 +87,10 @@ def create_user(email, password, name, mood=None):
             hashed_password = hashlib.sha256(password.encode()).hexdigest()
             
             # Insert user data
-            sql = ''' INSERT INTO users(email, password, name, mood)
-                      VALUES(?,?,?,?) '''
+            sql = ''' INSERT INTO users(email, password, name)
+                      VALUES(?,?,?) '''
             cur = conn.cursor()
-            cur.execute(sql, (email, hashed_password, name, mood))
+            cur.execute(sql, (email, hashed_password, name))
             conn.commit()
             user_id = cur.lastrowid
             print(f"Created new user with ID: {user_id}, name: {name}, email: {email}")
@@ -113,7 +113,7 @@ def get_user_by_email(email):
     if conn is not None:
         try:
             cur = conn.cursor()
-            cur.execute("SELECT id, email, password, name, mood FROM users WHERE email = ?", (email,))
+            cur.execute("SELECT id, email, password, name FROM users WHERE email = ?", (email,))
             row = cur.fetchone()
             conn.close()
             
