@@ -221,15 +221,36 @@ def chat():
     user_message = data.get('message', '')
     emotion = data.get('emotion', None)
     
+    # Check for crisis indicators first
+    is_crisis, crisis_type, crisis_score = detect_crisis(user_message)
+    
     # Step 1: Generate initial response from your trained model
     initial_response = generate_model_response(user_message, emotion)
     
     # Step 2: Refine the response with Gemini
     refined_response = refine_with_gemini(user_message, initial_response, emotion)
     
-    return jsonify({
+    response_data = {
         'response': refined_response
-    })
+    }
+    
+    # Add crisis information if detected
+    if is_crisis:
+        print(f"Crisis detected: {crisis_type} with confidence {crisis_score}")
+        crisis_resources = get_crisis_resources(crisis_type)
+        
+        response_data.update({
+            'crisis_detected': True,
+            'crisis_type': crisis_type,
+            'crisis_score': crisis_score,
+            'crisis_resources': crisis_resources
+        })
+        
+        # For high confidence crisis, prioritize immediate help
+        if crisis_score > 0.8:
+            response_data['response'] = f"I notice you may be going through something serious. Please consider these resources for immediate help:\n\n{crisis_resources}\n\nRegarding your message: {refined_response}"
+    
+    return jsonify(response_data)
 
 def generate_model_response(user_message, emotion=None, max_retries=3):
     if model_data is None:
@@ -283,15 +304,28 @@ def generate_model_response(user_message, emotion=None, max_retries=3):
         return f"I'm processing your message about: {user_message}"
 
 def refine_with_gemini(user_message, initial_response, emotion=None):
+    # Check for crisis
+    is_crisis, crisis_type, _ = detect_crisis(user_message)
+    
     # If Gemini is not available, return the initial response
     if gemini_model is None:
         print("Gemini model not available, returning initial response")
         return initial_response
         
+    # Add crisis information to the prompt if detected
+    crisis_info = ""
+    if is_crisis:
+        crisis_info = f"""
+        IMPORTANT: The user message indicates a potential {crisis_type} crisis. 
+        While maintaining a supportive tone, encourage them to seek professional help.
+        Be empathetic but clear about the importance of reaching out to crisis services.
+        """
+    
     prompt = f"""
     User message: {user_message}
     Initial response: {initial_response}
     User emotion: {emotion if emotion else 'unknown'}
+    {crisis_info}
     
     You are a supportive friend having a text conversation, NOT an AI. Follow these guidelines:
     1. Use a natural texting style with occasional short sentences
@@ -513,6 +547,105 @@ def get_therapists():
     except Exception as e:
         print(f"Error getting therapists: {e}")
         return jsonify({"error": str(e)}), 500
+
+def detect_crisis(message):
+    """
+    Detects potential crisis indicators in user messages
+    Returns a tuple of (is_crisis, crisis_type, confidence_score)
+    """
+    # Crisis indicators (expand this list)
+    crisis_keywords = {
+        'suicide': ['kill myself', 'suicide', 'end my life', 'want to die', 'better off dead'],
+        'self_harm': ['cut myself', 'hurt myself', 'self harm', 'harming myself', 'burn myself'],
+        'violence': ['hurt someone', 'kill someone', 'attack', 'harm others'],
+        'immediate_danger': ['right now', 'tonight', 'plan to', 'going to']
+    }
+    
+    message = message.lower()
+    
+    # Check for crisis indicators
+    detected_categories = []
+    max_score = 0
+    
+    for category, keywords in crisis_keywords.items():
+        for keyword in keywords:
+            if keyword in message:
+                # Higher score for immediate danger terms
+                score = 0.7
+                if category == 'immediate_danger' or any(danger in message for danger in crisis_keywords['immediate_danger']):
+                    score = 0.9
+                
+                detected_categories.append(category)
+                max_score = max(max_score, score)
+    
+    is_crisis = len(detected_categories) > 0
+    crisis_type = ', '.join(set(detected_categories)) if detected_categories else None
+    
+    return (is_crisis, crisis_type, max_score)
+
+# Add this function to get crisis resources
+def get_crisis_resources(crisis_type=None):
+    """Returns crisis resources based on detected type"""
+    # Default crisis resources
+    general_resources = [
+        "National Suicide Prevention Lifeline: 1-800-273-8255 (24/7)",
+        "Crisis Text Line: Text HOME to 741741 (24/7)",
+        "SAMHSA's National Helpline: 1-800-662-HELP (4357)"
+    ]
+    
+    # Specialized resources based on crisis type
+    specialized_resources = {
+        "suicide": [
+            "National Suicide Prevention Lifeline: 1-800-273-8255",
+            "IMAlive Crisis Chat: www.imalive.org"
+        ],
+        "self_harm": [
+            "S.A.F.E. Alternatives: 1-800-DONT-CUT",
+            "Self-Harm Crisis Text Line: Text HOME to 741741"
+        ],
+        "violence": [
+            "National Domestic Violence Hotline: 1-800-799-7233",
+            "SAMHSA's National Helpline: 1-800-662-HELP"
+        ]
+    }
+    
+    # Combine resources based on crisis type
+    if crisis_type and any(t in crisis_type for t in specialized_resources.keys()):
+        relevant_resources = []
+        for t in specialized_resources.keys():
+            if t in crisis_type:
+                relevant_resources.extend(specialized_resources[t])
+        
+        # Add general resources
+        relevant_resources.extend([r for r in general_resources if r not in relevant_resources])
+        return "\n".join(relevant_resources)
+    
+    # Return general resources if no specific type or type not in our resource list
+    return "\n".join(general_resources)
+
+@app.route('/test_crisis_detection', methods=['POST'])
+def test_crisis_detection():
+    data = request.json
+    message = data.get('message', '')
+    
+    is_crisis, crisis_type, score = detect_crisis(message)
+    resources = get_crisis_resources(crisis_type) if is_crisis else None
+    
+    return jsonify({
+        'is_crisis': is_crisis,
+        'crisis_type': crisis_type,
+        'confidence_score': score,
+        'resources': resources
+    })
+
+@app.route('/crisis_resources', methods=['GET'])
+def crisis_resources_endpoint():
+    crisis_type = request.args.get('type', None)
+    resources = get_crisis_resources(crisis_type)
+    return jsonify({
+        'resources': resources,
+        'crisis_type': crisis_type
+    })
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

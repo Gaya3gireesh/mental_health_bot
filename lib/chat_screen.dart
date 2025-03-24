@@ -29,6 +29,7 @@ class ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateMi
   bool _isLoadingResources = false;
   bool _resourcesLoaded = false;
   String? _currentMood;
+  Map<String, dynamic>? _currentCrisisInfo;
 
   // Initialize with a default value to prevent late initialization error
   late AnimationController _animationController;
@@ -166,9 +167,18 @@ class ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateMi
     }
   }
 
-  void _addBotMessage(String text) {
+  void _addBotMessage(String text, {Map<String, dynamic>? crisisInfo}) {
     setState(() {
-      _messages.add(Message(text: text, isUser: false));
+      _messages.add(Message(
+        text: text, 
+        isUser: false,
+        crisisInfo: crisisInfo,
+      ));
+      
+      // Store the most recent crisis info
+      if (crisisInfo != null) {
+        _currentCrisisInfo = crisisInfo;
+      }
     });
   }
 
@@ -241,6 +251,33 @@ class ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateMi
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final botResponse = data['response'];
+        
+        // Check if crisis was detected
+        final bool crisisDetected = data['crisis_detected'] ?? false;
+        
+        if (crisisDetected) {
+          // Extract crisis information
+          final crisisType = data['crisis_type'] as String?;
+          final crisisScore = data['crisis_score'] as double?;
+          final crisisResources = data['crisis_resources'] as String?;
+          
+          // Log crisis information
+          print('Crisis detected: $crisisType with score: $crisisScore');
+          
+          // Store crisis information for display
+          _currentCrisisInfo = {
+            'type': crisisType ?? 'unknown',
+            'score': crisisScore ?? 0.0,
+            'resources': crisisResources ?? ''
+          };
+          
+          // Show crisis alert
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              _showCrisisAlert(context, crisisType ?? 'crisis', crisisResources ?? '');
+            }
+          });
+        }
         
         // Add debug logging
         print("Bot response received: $botResponse");
@@ -563,6 +600,9 @@ class ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateMi
   }
 
   Widget _buildMessage(Message message) {
+    // Check if this message is associated with a crisis
+    final bool isCrisisMessage = !message.isUser && _currentCrisisInfo != null;
+    
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
       margin: EdgeInsets.only(
@@ -573,7 +613,9 @@ class ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateMi
       ),
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
       decoration: BoxDecoration(
-        color: message.isUser ? Colors.blue : Colors.white,
+        color: message.isUser 
+            ? Colors.blue 
+            : (isCrisisMessage ? Colors.orange.shade50 : Colors.white),
         borderRadius: BorderRadius.circular(20.0),
         boxShadow: [
           BoxShadow(
@@ -583,11 +625,41 @@ class ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateMi
           ),
         ],
       ),
-      child: Text(
-        message.text,
-        style: TextStyle(
-          color: message.isUser ? Colors.white : Colors.black87,
-        ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            message.text,
+            style: TextStyle(
+              color: message.isUser ? Colors.white : Colors.black87,
+            ),
+          ),
+          
+          // Add help button for crisis messages
+          if (isCrisisMessage) ...[
+            const SizedBox(height: 8),
+            const Divider(),
+            const SizedBox(height: 4),
+            InkWell(
+              onTap: () => _showCrisisResourcesDetails(),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.help_outline, color: Colors.red.shade400, size: 16),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Important resources available',
+                    style: TextStyle(
+                      color: Colors.red.shade400,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -847,6 +919,101 @@ class ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateMi
           Text(
             "Share your thoughts and feelings below",
             style: TextStyle(fontSize: 18, color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showCrisisAlert(BuildContext context, String crisisType, String resources) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: Colors.red),
+            const SizedBox(width: 8),
+            const Text('Important Information', style: TextStyle(color: Colors.red)),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Based on your message, you may need support.',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              Text(resources),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('I understand'),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Get Help Now', style: TextStyle(color: Colors.white)),
+            onPressed: () async {
+              Navigator.of(context).pop();
+              
+              // Use the safer showDialog approach instead of direct URL launching
+              final phoneNumber = '1-800-273-8255'; // National Suicide Prevention Lifeline
+              
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Call for Help'),
+                  content: Text('Would you like to call $phoneNumber for immediate assistance?'),
+                  actions: [
+                    TextButton(
+                      child: const Text('Cancel'),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                    TextButton(
+                      child: const Text('Call', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        _showCrisisResourcesDetails();
+                      },
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showCrisisResourcesDetails() {
+    if (_currentCrisisInfo == null) return;
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Crisis Resources'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Type: ${_currentCrisisInfo!['type']}'),
+              const SizedBox(height: 12),
+              Text(_currentCrisisInfo!['resources']),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('Close'),
+            onPressed: () => Navigator.of(context).pop(),
           ),
         ],
       ),
