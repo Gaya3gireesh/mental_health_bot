@@ -17,7 +17,8 @@ from database import get_all_therapists
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)  # Add this line to enable CORS for all routes
+# Allow all origins with all methods and headers
+CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": "*"}})
 
 # Configure Gemini API
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
