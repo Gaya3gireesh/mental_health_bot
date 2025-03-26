@@ -220,19 +220,26 @@ if model_data is None:
 def chat():
     data = request.json
     user_message = data.get('message', '')
-    emotion = data.get('emotion', None)
+    user_emotion = data.get('emotion', 'Neutral')
+    
+    # Analyze mood with Gemini for a more nuanced understanding
+    gemini_detected_mood = analyze_mood_with_gemini(user_message)
+    
+    # Use Gemini's mood if available, otherwise fall back to user's reported mood
+    effective_emotion = gemini_detected_mood or user_emotion
     
     # Check for crisis indicators first
     is_crisis, crisis_type, crisis_score = detect_crisis(user_message)
     
     # Step 1: Generate initial response from your trained model
-    initial_response = generate_model_response(user_message, emotion)
+    initial_response = generate_model_response(user_message, effective_emotion)
     
     # Step 2: Refine the response with Gemini
-    refined_response = refine_with_gemini(user_message, initial_response, emotion)
+    refined_response = refine_with_gemini(user_message, initial_response, effective_emotion)
     
     response_data = {
-        'response': refined_response
+        'response': refined_response,
+        'detected_mood': gemini_detected_mood
     }
     
     # Add crisis information if detected
@@ -647,6 +654,51 @@ def crisis_resources_endpoint():
         'resources': resources,
         'crisis_type': crisis_type
     })
+
+def analyze_mood_with_gemini(user_message):
+    """
+    Use Gemini to analyze the user's mood based on their message
+    Returns one of: 'Happy', 'Sad', 'Angry', 'Anxious', 'Calm', 'Neutral'
+    """
+    if gemini_model is None:
+        print("Gemini model not available for mood detection")
+        return None
+    
+    try:
+        prompt = f"""
+        Analyze the emotional state expressed in this message. Choose exactly ONE emotion from this list:
+        - Happy (joy, contentment, excitement, gratitude)
+        - Sad (sorrow, grief, disappointment, regret)
+        - Angry (frustration, annoyance, rage, irritation)
+        - Anxious (worry, stress, nervousness, fear)
+        - Calm (peaceful, relaxed, composed, content)
+        - Neutral (no strong emotion detected)
+        
+        Respond with ONLY the single word representing the predominant emotion.
+        
+        Message to analyze: "{user_message}"
+        """
+        
+        response = gemini_model.generate_content(prompt, generation_config={
+            "max_output_tokens": 10,
+            "temperature": 0.1,  # Keep it deterministic
+        })
+        
+        # Extract and clean the response
+        mood = response.text.strip()
+        
+        # Ensure the response matches one of our categories
+        valid_moods = ['Happy', 'Sad', 'Angry', 'Anxious', 'Calm', 'Neutral']
+        for valid_mood in valid_moods:
+            if valid_mood.lower() in mood.lower():
+                print(f"Gemini detected mood: {valid_mood}")
+                return valid_mood
+        
+        print(f"Gemini returned unrecognized mood: {mood}, defaulting to Neutral")
+        return 'Neutral'
+    except Exception as e:
+        print(f"Error in Gemini mood analysis: {e}")
+        return None
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

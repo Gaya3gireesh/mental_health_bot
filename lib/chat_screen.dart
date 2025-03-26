@@ -32,6 +32,9 @@ class ChatScreenState extends State<ChatScreen>
   String? _currentMood;
   Map<String, dynamic>? _currentCrisisInfo;
 
+  // Track recent emotions for better assessment
+  final List<MapEntry<String, DateTime>> _recentMoods = [];
+
   // Initialize with a default value to prevent late initialization error
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation = const AlwaysStoppedAnimation(1.0);
@@ -195,6 +198,12 @@ class ChatScreenState extends State<ChatScreen>
 
     _textController.clear();
 
+    // Detect mood from user's message directly using keywords
+    final detectedMood = _detectMoodFromUserMessage(text);
+    if (detectedMood != 'Neutral') {
+      _updateMood(detectedMood);
+    }
+
     setState(() {
       _messages.add(Message(text: text, isUser: true));
       _isLoading = true;
@@ -204,22 +213,12 @@ class ChatScreenState extends State<ChatScreen>
     // Start animation when transitioning to chat layout
     _animationController.forward();
 
-    // Call backend API
+    // Call backend API - Gemini mood detection will happen here
     _getBotResponse(text).then((response) {
       setState(() {
         _isLoading = false;
         _addBotMessage(response);
       });
-
-      // More flexible mood detection - check for any mood word
-      final extractedMood = _extractMoodFromResponse(response);
-      if (extractedMood.isNotEmpty) {
-        print("Detected mood in response: $extractedMood");
-        print("Full response: $response");
-
-        // Use our new method to update the mood
-        _updateMood(extractedMood);
-      }
     }).catchError((error) {
       setState(() {
         _isLoading = false;
@@ -246,14 +245,12 @@ class ChatScreenState extends State<ChatScreen>
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'message': message,
-          'emotion': _currentMood ??
-              widget.initialEmotion ??
-              '', // Use current mood if available
+          'emotion': _currentMood ?? 'Neutral', // Our detected mood
           'user_id': widget.userId
         }),
       )
           .timeout(
-        const Duration(seconds: 15), // Increased timeout
+        const Duration(seconds: 15),
         onTimeout: () {
           throw TimeoutException(
               'Connection timed out. Please check your server.');
@@ -264,52 +261,30 @@ class ChatScreenState extends State<ChatScreen>
         final data = jsonDecode(response.body);
         final botResponse = data['response'];
 
+        // Check if Gemini detected a different mood
+        final geminiDetectedMood = data['detected_mood'] as String?;
+        if (geminiDetectedMood != null && 
+            geminiDetectedMood != _currentMood && 
+            geminiDetectedMood != 'Neutral') {
+          print("Gemini detected different mood: $geminiDetectedMood");
+          
+          // Update our mood but with a lower confidence indicator
+          // so it doesn't override user's explicit selections
+          _updateMood(geminiDetectedMood, isUserSelected: false);
+        }
+
         // Check if crisis was detected
         final bool crisisDetected = data['crisis_detected'] ?? false;
-
-        if (crisisDetected) {
-          // Extract crisis information
-          final crisisType = data['crisis_type'] as String?;
-          final crisisScore = data['crisis_score'] as double?;
-          final crisisResources = data['crisis_resources'] as String?;
-
-          // Log crisis information
-          print('Crisis detected: $crisisType with score: $crisisScore');
-
-          // Store crisis information for display
-          _currentCrisisInfo = {
-            'type': crisisType ?? 'unknown',
-            'score': crisisScore ?? 0.0,
-            'resources': crisisResources ?? ''
-          };
-
-          // Show crisis alert
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              _showCrisisAlert(
-                  context, crisisType ?? 'crisis', crisisResources ?? '');
-            }
-          });
+        
+        // Check if crisis was detected and show resources if needed
+        if (crisisDetected && data.containsKey('crisis_info')) {
+          // Add bot message with crisis information
+          _addBotMessage(botResponse, crisisInfo: data['crisis_info']);
+          return botResponse;
         }
 
-        // Add debug logging
-        print("Bot response received: $botResponse");
-        print("Looking for mood keywords in response...");
-
-        // If message is asking about emotions or similar, add a mood prompt
-        final lowerMessage = message.toLowerCase();
-        if (lowerMessage.contains("feel") ||
-            lowerMessage.contains("mood") ||
-            lowerMessage.contains("emotion") ||
-            lowerMessage.contains("how am i") ||
-            lowerMessage.contains("how are you")) {
-          // For these types of questions, force the bot to mention the current mood
-          // This will help trigger mood detection
-          final moodPrompt =
-              "Based on our conversation, you seem to be feeling $_currentMood. ";
-          return moodPrompt + botResponse;
-        }
-
+        // Rest of your existing code...
+        
         return botResponse;
       } else {
         throw Exception('Failed to load response: ${response.statusCode}');
@@ -951,268 +926,6 @@ class ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // Move this method INSIDE the ChatScreenState class
-  String _extractMoodFromResponse(String response) {
-    // Make lowercase for case-insensitive matching
-    final lowerResponse = response.toLowerCase();
-
-    // Expanded map of mood keywords with more comprehensive indicators
-    final Map<String, List<String>> moodKeywords = {
-      'Happy': [
-        'happy',
-        'joy',
-        'glad',
-        'cheerful',
-        'delighted',
-        'pleased',
-        'excited',
-        'thrilled',
-        'content',
-        'satisfied',
-        'elated',
-        'wonderful',
-        'great',
-        'fantastic',
-        'terrific',
-        'good mood',
-        'positive',
-        'upbeat',
-        'enthusiastic',
-        'overjoyed',
-        'ecstatic',
-        'smiling',
-        'laugh',
-        'laughing',
-        'grin',
-        'beaming',
-        'radiant',
-        'uplifted'
-      ],
-      'Sad': [
-        'sad',
-        'unhappy',
-        'depressed',
-        'down',
-        'blue',
-        'gloomy',
-        'miserable',
-        'sorrow',
-        'grief',
-        'heartbroken',
-        'devastated',
-        'upset',
-        'discouraged',
-        'disappointed',
-        'despondent',
-        'disheartened',
-        'distressed',
-        'melancholy',
-        'mournful',
-        'hopeless',
-        'forlorn',
-        'tearful',
-        'crying',
-        'weeping',
-        'somber',
-        'dejected',
-        'downcast',
-        'bummed'
-      ],
-      'Angry': [
-        'angry',
-        'upset',
-        'frustrated',
-        'mad',
-        'furious',
-        'irritated',
-        'annoyed',
-        'agitated',
-        'outraged',
-        'resentful',
-        'hostile',
-        'enraged',
-        'incensed',
-        'indignant',
-        'livid',
-        'provoked',
-        'irate',
-        'fuming',
-        'seething',
-        'vexed',
-        'infuriated',
-        'cross',
-        'grumpy'
-      ],
-      'Calm': [
-        'calm',
-        'relaxed',
-        'peaceful',
-        'tranquil',
-        'serene',
-        'composed',
-        'collected',
-        'centered',
-        'at ease',
-        'mellow',
-        'soothing',
-        'quiet',
-        'settled',
-        'still',
-        'placid',
-        'unruffled',
-        'zen',
-        'harmonious',
-        'balanced',
-        'restful',
-        'chill',
-        'stable',
-        'steady',
-        'level-headed'
-      ],
-      'Anxious': [
-        'anxious',
-        'worried',
-        'nervous',
-        'stress',
-        'tense',
-        'uneasy',
-        'apprehensive',
-        'concerned',
-        'afraid',
-        'fearful',
-        'scared',
-        'frightened',
-        'alarmed',
-        'panicky',
-        'jittery',
-        'edgy',
-        'restless',
-        'troubled',
-        'bothered',
-        'distressed',
-        'fretful',
-        'agitated',
-        'overwhelmed',
-        'dreading',
-        'panic',
-        'terror',
-        'phobia',
-        'dread',
-        'uncertainty',
-        'doubt',
-        'hesitant'
-      ],
-      'Neutral': [
-        'neutral',
-        'fine',
-        'okay',
-        'alright',
-        'average',
-        'moderate',
-        'so-so',
-        'fair',
-        'indifferent',
-        'impartial',
-        'balanced',
-        'medium',
-        'standard',
-        'usual',
-        'regular'
-      ]
-    };
-
-    // Contextual tone analysis with weights
-    Map<String, int> moodScores = {
-      'Happy': 0,
-      'Sad': 0,
-      'Angry': 0,
-      'Calm': 0,
-      'Anxious': 0,
-      'Neutral': 0,
-    };
-
-    // Check for exact keyword matches
-    for (final entry in moodKeywords.entries) {
-      for (final keyword in entry.value) {
-        if (lowerResponse.contains(keyword)) {
-          // Increase score for this mood
-          moodScores[entry.key] = moodScores[entry.key]! + 2;
-          print("Found mood keyword: $keyword, adding to ${entry.key} score");
-        }
-      }
-    }
-
-    // Look for sentence sentiment indicators
-    if (lowerResponse.contains('feeling better') ||
-        lowerResponse.contains('that\'s great') ||
-        lowerResponse.contains('good to hear')) {
-      moodScores['Happy'] = moodScores['Happy']! + 1;
-    }
-
-    if (lowerResponse.contains('sorry to hear') ||
-        lowerResponse.contains('that sounds difficult') ||
-        lowerResponse.contains('that must be hard')) {
-      moodScores['Sad'] = moodScores['Sad']! + 1;
-    }
-
-    if (lowerResponse.contains('take a deep breath') ||
-        lowerResponse.contains('relax') ||
-        lowerResponse.contains('let\'s focus')) {
-      moodScores['Calm'] = moodScores['Calm']! + 1;
-    }
-
-    if (lowerResponse.contains('it\'s understandable') ||
-        lowerResponse.contains('many people feel this way') ||
-        lowerResponse.contains('it\'s common to')) {
-      moodScores['Neutral'] = moodScores['Neutral']! + 1;
-    }
-
-    // If clear patterns like "you seem" or "you sound" are present
-    if (lowerResponse.contains('you seem happy') ||
-        lowerResponse.contains('you sound cheerful')) {
-      moodScores['Happy'] = moodScores['Happy']! + 3;
-    }
-    if (lowerResponse.contains('you seem sad') ||
-        lowerResponse.contains('you sound down')) {
-      moodScores['Sad'] = moodScores['Sad']! + 3;
-    }
-    if (lowerResponse.contains('you seem angry') ||
-        lowerResponse.contains('you sound frustrated')) {
-      moodScores['Angry'] = moodScores['Angry']! + 3;
-    }
-    if (lowerResponse.contains('you seem calm') ||
-        lowerResponse.contains('you sound relaxed')) {
-      moodScores['Calm'] = moodScores['Calm']! + 3;
-    }
-    if (lowerResponse.contains('you seem anxious') ||
-        lowerResponse.contains('you sound worried')) {
-      moodScores['Anxious'] = moodScores['Anxious']! + 3;
-    }
-
-    // Debug output
-    print("Mood scores: $moodScores");
-
-    // Find the mood with the highest score
-    String detectedMood = '';
-    int highestScore = 0;
-
-    moodScores.forEach((mood, score) {
-      if (score > highestScore) {
-        highestScore = score;
-        detectedMood = mood;
-      }
-    });
-
-    // Only return a mood if the score is above a threshold (to avoid false positives)
-    if (highestScore > 1) {
-      print("Detected mood: $detectedMood with score $highestScore");
-      return detectedMood;
-    }
-
-    // If no strong mood was detected
-    return '';
-  }
-
   // Add this new method to your ChatScreenState class
 
   void _showMoodSelectionDialog() {
@@ -1277,79 +990,6 @@ class ChatScreenState extends State<ChatScreen>
     );
   }
 
-  void _showCrisisAlert(
-      BuildContext context, String crisisType, String resources) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            const Icon(Icons.warning_amber_rounded, color: Colors.red),
-            const SizedBox(width: 8),
-            const Text('Important Information',
-                style: TextStyle(color: Colors.red)),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Based on your message, you may need support.',
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 12),
-              Text(resources),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            child: const Text('I understand'),
-            onPressed: () => Navigator.of(context).pop(),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Get Help Now',
-                style: TextStyle(color: Colors.white)),
-            onPressed: () async {
-              Navigator.of(context).pop();
-
-              // Use the safer showDialog approach instead of direct URL launching
-              final phoneNumber =
-                  '1-800-273-8255'; // National Suicide Prevention Lifeline
-
-              showDialog(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('Call for Help'),
-                  content: Text(
-                      'Would you like to call $phoneNumber for immediate assistance?'),
-                  actions: [
-                    TextButton(
-                      child: const Text('Cancel'),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                    TextButton(
-                      child: const Text('Call',
-                          style: TextStyle(
-                              color: Colors.red, fontWeight: FontWeight.bold)),
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        _showCrisisResourcesDetails();
-                      },
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
 
   void _showCrisisResourcesDetails() {
     if (_currentCrisisInfo == null) return;
@@ -1379,28 +1019,22 @@ class ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // Add this method to your ChatScreenState class
-  void _debugMoodState() {
-    print("Current mood state: $_currentMood");
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Current mood: ${_currentMood ?? 'Not set'}'),
-        action: SnackBarAction(
-          label: 'Change',
-          onPressed: _showMoodSelectionDialog,
-        ),
-      ),
-    );
-  }
-
-  // Add this method to your ChatScreenState class
-  void _updateMood(String newMood) {
+  // Update mood with timestamp tracking
+  void _updateMood(String newMood, {bool isUserSelected = true}) {
     // Only update if it's actually different
-    if (newMood.isNotEmpty && newMood != _currentMood) {
+    if (newMood.isNotEmpty && (newMood != _currentMood || _recentMoods.isEmpty)) {
+      // Record mood with timestamp and source
+      _recentMoods.add(MapEntry(newMood, DateTime.now()));
+      
+      // Keep only last 10 mood entries
+      if (_recentMoods.length > 10) {
+        _recentMoods.removeAt(0);
+      }
+      
       setState(() {
         _currentMood = newMood;
-        print("Mood updated to: $_currentMood");
+        print("Mood updated to: $_currentMood (${isUserSelected ? 'user selected' : 'auto-detected'})");
       });
 
       // Extra step to ensure UI updates
@@ -1408,17 +1042,186 @@ class ChatScreenState extends State<ChatScreen>
         if (mounted) setState(() {});
       });
 
-      // Show a subtle indicator when mood changes automatically
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Mood updated to: $newMood'),
-          duration: const Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
-          margin: const EdgeInsets.only(bottom: 70.0, left: 20, right: 20),
-        ),
-      );
+      // Only show the snackbar for user-selected moods
+      if (isUserSelected) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Mood updated: $newMood'),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.only(bottom: 70.0, left: 20, right: 20),
+          ),
+        );
+      }
     }
   }
+
+  String _detectMoodFromUserMessage(String userMessage) {
+    // Make lowercase for case-insensitive matching
+    final lowerMessage = userMessage.toLowerCase();
+    
+    // Map of mood keywords with indicators and weights
+    final Map<String, Map<String, int>> moodKeywords = {
+      'Happy': {
+        'happy': 3, 'joy': 3, 'glad': 2, 'cheerful': 3, 'delighted': 3,
+        'pleased': 2, 'excited': 2, 'thrilled': 3, 'content': 2,
+        'great': 2, 'wonderful': 3, 'fantastic': 3, 'amazing': 3,
+        'good': 1, 'better': 1, 'laugh': 2, 'smile': 2, 'enjoy': 2,
+        'loving': 2, 'appreciate': 1, 'grateful': 2, 'thankful': 2,
+        'blessing': 2, 'positive': 1
+      },
+      'Sad': {
+        'sad': 3, 'unhappy': 3, 'depressed': 3, 'down': 2, 'blue': 2,
+        'gloomy': 2, 'miserable': 3, 'sorrow': 3, 'grief': 3,
+        'heartbroken': 3, 'devastated': 3, 'upset': 2, 'discouraged': 2,
+        'disappointed': 2, 'hopeless': 3, 'cry': 2, 'crying': 3,
+        'tears': 2, 'miss': 1, 'lost': 1, 'alone': 2, 'lonely': 3,
+        'negative': 1, 'terrible': 2, 'awful': 2, 'bad': 1
+      },
+      'Angry': {
+        'angry': 3, 'mad': 3, 'furious': 3, 'outraged': 3, 'annoyed': 2,
+        'irritated': 2, 'frustrated': 2, 'rage': 3, 'hate': 3,
+        'resent': 2, 'disgusted': 2, 'sick of': 2, 'fed up': 2,
+        'tired of': 1, 'pissed': 3, 'explode': 2, 'yell': 2
+      },
+      'Anxious': {
+        'anxious': 3, 'worried': 3, 'nervous': 3, 'stressed': 3, 'stress': 3,
+        'tense': 2, 'uneasy': 2, 'afraid': 2, 'scared': 3, 'fear': 2,
+        'panic': 3, 'dread': 3, 'overwhelmed': 3, 'pressured': 2,
+        'concerned': 1, 'unsure': 1, 'uncertain': 1, 'doubt': 1,
+        'freaking out': 3, 'terrified': 3, 'can\'t handle': 2
+      },
+      'Calm': {
+        'calm': 3, 'relaxed': 3, 'peaceful': 3, 'quiet': 1, 'serene': 3,
+        'tranquil': 3, 'centered': 2, 'balanced': 2, 'mindful': 2,
+        'meditate': 2, 'breathing': 1, 'composed': 2, 'steady': 2,
+        'stable': 2, 'grounded': 2, 'okay': 1, 'fine': 1, 'chill': 2
+      }
+    };
+    
+    // Track mood scores
+    Map<String, int> moodScores = {
+      'Happy': 0,
+      'Sad': 0,
+      'Angry': 0,
+      'Anxious': 0,
+      'Calm': 0,
+      'Neutral': 0, // Default
+    };
+    
+    // Check for exact keyword matches with weighted scoring
+    for (final entry in moodKeywords.entries) {
+      final String mood = entry.key;
+      final Map<String, int> keywords = entry.value;
+      
+      for (final keyword in keywords.entries) {
+        // Check for whole word match (with boundaries)
+        RegExp wordPattern = RegExp(r'\b' + keyword.key + r'\b');
+        if (wordPattern.hasMatch(lowerMessage)) {
+          // Add weighted score
+          moodScores[mood] = moodScores[mood]! + keyword.value;
+          print("Found mood keyword: ${keyword.key} (${keyword.value}), adding to $mood score");
+        }
+      }
+    }
+    
+    // Look for contextual patterns and phrases
+    if (lowerMessage.contains('i feel') || lowerMessage.contains('i am') || 
+        lowerMessage.contains('i\'m') || lowerMessage.contains('feeling')) {
+      // These indicate direct mood expressions, check nearby words
+      
+      // Happy patterns
+      if (_containsPatternNearPhrase(lowerMessage, ['i feel', 'i am', 'i\'m', 'feeling'], 
+          ['good', 'great', 'better', 'happy', 'joyful', 'glad'])) {
+        moodScores['Happy'] = moodScores['Happy']! + 4;
+        print("Detected happy pattern expression");
+      }
+      
+      // Sad patterns
+      if (_containsPatternNearPhrase(lowerMessage, ['i feel', 'i am', 'i\'m', 'feeling'], 
+          ['sad', 'down', 'depressed', 'unhappy', 'miserable'])) {
+        moodScores['Sad'] = moodScores['Sad']! + 4;
+        print("Detected sad pattern expression");
+      }
+      
+      // Angry patterns
+      if (_containsPatternNearPhrase(lowerMessage, ['i feel', 'i am', 'i\'m', 'feeling'], 
+          ['angry', 'mad', 'frustrated', 'annoyed', 'irritated'])) {
+        moodScores['Angry'] = moodScores['Angry']! + 4;
+        print("Detected angry pattern expression");
+      }
+      
+      // Anxious patterns
+      if (_containsPatternNearPhrase(lowerMessage, ['i feel', 'i am', 'i\'m', 'feeling'], 
+          ['anxious', 'worried', 'nervous', 'stressed', 'scared'])) {
+        moodScores['Anxious'] = moodScores['Anxious']! + 4;
+        print("Detected anxious pattern expression");
+      }
+      
+      // Calm patterns
+      if (_containsPatternNearPhrase(lowerMessage, ['i feel', 'i am', 'i\'m', 'feeling'], 
+          ['calm', 'peaceful', 'relaxed', 'fine', 'okay'])) {
+        moodScores['Calm'] = moodScores['Calm']! + 4;
+        print("Detected calm pattern expression");
+      }
+    }
+    
+    // Negation handling (e.g., "not happy")
+    if (lowerMessage.contains('not happy') || lowerMessage.contains('not feeling good') || 
+        lowerMessage.contains('don\'t feel good')) {
+      moodScores['Happy'] = moodScores['Happy']! - 2; // Reduce happy score
+      moodScores['Sad'] = moodScores['Sad']! + 1; // Slightly increase sad score
+    }
+    
+    if (lowerMessage.contains('not sad') || lowerMessage.contains('not feeling sad') || 
+        lowerMessage.contains('don\'t feel sad')) {
+      moodScores['Sad'] = moodScores['Sad']! - 2;
+    }
+    
+    // Debug output
+    print("Mood scores from user message: $moodScores");
+    
+    // Find the mood with the highest score
+    String detectedMood = 'Neutral';
+    int highestScore = 0;
+    
+    moodScores.forEach((mood, score) {
+      if (score > highestScore) {
+        highestScore = score;
+        detectedMood = mood;
+      }
+    });
+    
+    // Only return a mood if the score is above a threshold
+    if (highestScore >= 2) {
+      print("Detected user mood: $detectedMood with score $highestScore");
+      return detectedMood;
+    }
+    
+    // If no strong mood was detected
+    return 'Neutral';
+  }
+
+  // Helper method to check if a phrase pattern appears near certain words
+  bool _containsPatternNearPhrase(String message, List<String> phrases, List<String> keywords) {
+    for (final phrase in phrases) {
+      if (message.contains(phrase)) {
+        final int phraseIndex = message.indexOf(phrase);
+        final String textAfterPhrase = message.substring(phraseIndex + phrase.length);
+        
+        // Check if any keyword appears within 20 characters after the phrase
+        for (final keyword in keywords) {
+          if (textAfterPhrase.contains(keyword) && 
+              textAfterPhrase.indexOf(keyword) < 20) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+
 }
 
 // Add this class at the top level of your file (outside any other classes)
