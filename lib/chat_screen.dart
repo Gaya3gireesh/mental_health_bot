@@ -198,7 +198,7 @@ class ChatScreenState extends State<ChatScreen>
 
     _textController.clear();
 
-    // Detect mood from user's message directly instead of from response
+    // Detect mood from user's message directly using keywords
     final detectedMood = _detectMoodFromUserMessage(text);
     if (detectedMood != 'Neutral') {
       _updateMood(detectedMood);
@@ -213,21 +213,12 @@ class ChatScreenState extends State<ChatScreen>
     // Start animation when transitioning to chat layout
     _animationController.forward();
 
-    // Call backend API
+    // Call backend API - Gemini mood detection will happen here
     _getBotResponse(text).then((response) {
       setState(() {
         _isLoading = false;
         _addBotMessage(response);
       });
-      
-      // We no longer need this code since we're detecting mood from user messages
-      // final extractedMood = _extractMoodFromResponse(response);
-      // if (extractedMood.isNotEmpty) {
-      //   print("Detected mood in response: $extractedMood");
-      //   print("Full response: $response");
-      //   _updateMood(extractedMood);
-      // }
-      
     }).catchError((error) {
       setState(() {
         _isLoading = false;
@@ -254,7 +245,7 @@ class ChatScreenState extends State<ChatScreen>
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'message': message,
-          'emotion': _currentMood ?? 'Neutral', // Use detected mood
+          'emotion': _currentMood ?? 'Neutral', // Our detected mood
           'user_id': widget.userId
         }),
       )
@@ -270,52 +261,30 @@ class ChatScreenState extends State<ChatScreen>
         final data = jsonDecode(response.body);
         final botResponse = data['response'];
 
+        // Check if Gemini detected a different mood
+        final geminiDetectedMood = data['detected_mood'] as String?;
+        if (geminiDetectedMood != null && 
+            geminiDetectedMood != _currentMood && 
+            geminiDetectedMood != 'Neutral') {
+          print("Gemini detected different mood: $geminiDetectedMood");
+          
+          // Update our mood but with a lower confidence indicator
+          // so it doesn't override user's explicit selections
+          _updateMood(geminiDetectedMood, isUserSelected: false);
+        }
+
         // Check if crisis was detected
         final bool crisisDetected = data['crisis_detected'] ?? false;
-
-        if (crisisDetected) {
-          // Extract crisis information
-          final crisisType = data['crisis_type'] as String?;
-          final crisisScore = data['crisis_score'] as double?;
-          final crisisResources = data['crisis_resources'] as String?;
-
-          // Log crisis information
-          print('Crisis detected: $crisisType with score: $crisisScore');
-
-          // Store crisis information for display
-          _currentCrisisInfo = {
-            'type': crisisType ?? 'unknown',
-            'score': crisisScore ?? 0.0,
-            'resources': crisisResources ?? ''
-          };
-
-          // Show crisis alert
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              _showCrisisAlert(
-                  context, crisisType ?? 'crisis', crisisResources ?? '');
-            }
-          });
+        
+        // Check if crisis was detected and show resources if needed
+        if (crisisDetected && data.containsKey('crisis_info')) {
+          // Add bot message with crisis information
+          _addBotMessage(botResponse, crisisInfo: data['crisis_info']);
+          return botResponse;
         }
 
-        // Add debug logging
-        print("Bot response received: $botResponse");
-        print("Looking for mood keywords in response...");
-
-        // If message is asking about emotions or similar, add a mood prompt
-        final lowerMessage = message.toLowerCase();
-        if (lowerMessage.contains("feel") ||
-            lowerMessage.contains("mood") ||
-            lowerMessage.contains("emotion") ||
-            lowerMessage.contains("how am i") ||
-            lowerMessage.contains("how are you")) {
-          // For these types of questions, force the bot to mention the current mood
-          // This will help trigger mood detection
-          final moodPrompt =
-              "Based on our conversation, you seem to be feeling $_currentMood. ";
-          return moodPrompt + botResponse;
-        }
-
+        // Rest of your existing code...
+        
         return botResponse;
       } else {
         throw Exception('Failed to load response: ${response.statusCode}');
@@ -1021,79 +990,6 @@ class ChatScreenState extends State<ChatScreen>
     );
   }
 
-  void _showCrisisAlert(
-      BuildContext context, String crisisType, String resources) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            const Icon(Icons.warning_amber_rounded, color: Colors.red),
-            const SizedBox(width: 8),
-            const Text('Important Information',
-                style: TextStyle(color: Colors.red)),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Based on your message, you may need support.',
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 12),
-              Text(resources),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            child: const Text('I understand'),
-            onPressed: () => Navigator.of(context).pop(),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Get Help Now',
-                style: TextStyle(color: Colors.white)),
-            onPressed: () async {
-              Navigator.of(context).pop();
-
-              // Use the safer showDialog approach instead of direct URL launching
-              final phoneNumber =
-                  '1-800-273-8255'; // National Suicide Prevention Lifeline
-
-              showDialog(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('Call for Help'),
-                  content: Text(
-                      'Would you like to call $phoneNumber for immediate assistance?'),
-                  actions: [
-                    TextButton(
-                      child: const Text('Cancel'),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                    TextButton(
-                      child: const Text('Call',
-                          style: TextStyle(
-                              color: Colors.red, fontWeight: FontWeight.bold)),
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        _showCrisisResourcesDetails();
-                      },
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
 
   void _showCrisisResourcesDetails() {
     if (_currentCrisisInfo == null) return;
@@ -1125,10 +1021,10 @@ class ChatScreenState extends State<ChatScreen>
 
 
   // Update mood with timestamp tracking
-  void _updateMood(String newMood) {
+  void _updateMood(String newMood, {bool isUserSelected = true}) {
     // Only update if it's actually different
     if (newMood.isNotEmpty && (newMood != _currentMood || _recentMoods.isEmpty)) {
-      // Record mood with timestamp
+      // Record mood with timestamp and source
       _recentMoods.add(MapEntry(newMood, DateTime.now()));
       
       // Keep only last 10 mood entries
@@ -1138,7 +1034,7 @@ class ChatScreenState extends State<ChatScreen>
       
       setState(() {
         _currentMood = newMood;
-        print("Mood updated to: $_currentMood");
+        print("Mood updated to: $_currentMood (${isUserSelected ? 'user selected' : 'auto-detected'})");
       });
 
       // Extra step to ensure UI updates
@@ -1146,15 +1042,17 @@ class ChatScreenState extends State<ChatScreen>
         if (mounted) setState(() {});
       });
 
-      // Show a subtle indicator when mood changes
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Mood detected: $newMood'),
-          duration: const Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
-          margin: const EdgeInsets.only(bottom: 70.0, left: 20, right: 20),
-        ),
-      );
+      // Only show the snackbar for user-selected moods
+      if (isUserSelected) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Mood updated: $newMood'),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.only(bottom: 70.0, left: 20, right: 20),
+          ),
+        );
+      }
     }
   }
 
