@@ -47,3 +47,5 @@ app.*.map.json
 /backend/venv
 /backend/.env
 .env
+
+/backend/models
