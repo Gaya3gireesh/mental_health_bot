@@ -4,17 +4,14 @@ import hashlib
 import os
 
 def create_connection():
-    """Create a database connection to the database in the root folder"""
-    # Use the database in the root directory instead of backend
-    root_dir = os.path.dirname(os.path.dirname(__file__))  # Go up one level to the project root
+    """Create a database connection to the sample.db file in the project root directory."""
+    # Determine the project root directory (one level above this file)
+    root_dir = os.path.dirname(os.path.dirname(__file__))
     db_path = os.path.join(root_dir, 'sample.db')
-    
-    # Debug prints
-    print(f"Current file location: {__file__}")
-    print(f"Root directory: {root_dir}")
-    print(f"Attempting to connect to DB at: {db_path}")
-    print(f"DB file exists: {os.path.exists(db_path)}")
-    
+
+    # Print useful debug information
+    print(f"Database file path: {db_path}")
+    print(f"Database file exists: {os.path.exists(db_path)}")
     conn = None
     try:
         conn = sqlite3.connect(db_path)
