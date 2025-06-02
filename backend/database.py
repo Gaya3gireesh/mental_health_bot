@@ -13,16 +13,15 @@ def create_connection():
     print(f"Database file path: {db_path}")
     print(f"Database file exists: {os.path.exists(db_path)}")
     conn = None
-    try:
-        conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path)
+    if conn:
         cursor = conn.cursor()
-        # Verify we can query the database
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = cursor.fetchall()
         print(f"Available tables in database: {tables}")
         return conn
-    except Error as e:
-        print(f"Error connecting to database: {e}")
+    else:
+        print("Error connecting to database")
         return None
 
 def init_db():
