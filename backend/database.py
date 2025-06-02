@@ -43,20 +43,15 @@ def init_db():
                 # Create users table if it doesn't exist
                 users_table = """ CREATE TABLE IF NOT EXISTS users (
                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                if not table_exists:
-                    users_table = """ CREATE TABLE IF NOT EXISTS users (
-                                id INTEGER PRIMARY KEY AUTOINCREMENT,
                                 email TEXT UNIQUE NOT NULL,
                                 password TEXT NOT NULL,
                                 name TEXT NOT NULL
                             ); """
-                    cursor.execute(users_table)
-                    conn.commit()
-                    print("Created 'users' table")
-                else:
-                    print("The 'users' table already exists in the database.")
+                cursor.execute(users_table)
                 conn.commit()
-                print("Users table already exists")
+                print("Created 'users' table")
+            else:
+                print("The 'users' table already exists in the database.")
                 
             # Create therapists table
             therapists_table = """ CREATE TABLE IF NOT EXISTS therapists (
