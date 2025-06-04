@@ -22,7 +22,7 @@ def create_connection():
         # Verify we can query the database
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = cursor.fetchall()
-        print(f"All Available tables in database: {tables}")
+        print(f"Available tables in database: {tables}")
         return conn
     except Error as e:
         print(f"Error connecting to database: {e}")
