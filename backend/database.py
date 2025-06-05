@@ -4,28 +4,24 @@ import hashlib
 import os
 
 def create_connection():
-    """Create a database connection to the database in the root folder"""
-    # Use the database in the root directory instead of backend
-    root_dir = os.path.dirname(os.path.dirname(__file__))  # Go up one level to the project root
+    """Create a database connection to the sample.db file in the project root directory."""
+    # Determine the project root directory (one level above this file)
+    root_dir = os.path.dirname(os.path.dirname(__file__))
     db_path = os.path.join(root_dir, 'sample.db')
-    
-    # Debug prints
-    print(f"Current file location: {__file__}")
-    print(f"Root directory: {root_dir}")
-    print(f"Attempting to connect to DB at: {db_path}")
-    print(f"DB file exists: {os.path.exists(db_path)}")
-    
+
+    # Print useful debug information
+    print(f"Database file path: {db_path}")
+    print(f"Database file exists: {os.path.exists(db_path)}")
     conn = None
-    try:
-        conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path)
+    if conn:
         cursor = conn.cursor()
-        # Verify we can query the database
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = cursor.fetchall()
         print(f"Available tables in database: {tables}")
         return conn
-    except Error as e:
-        print(f"Error connecting to database: {e}")
+    else:
+        print("Error connecting to database")
         return None
 
 def init_db():
@@ -35,8 +31,13 @@ def init_db():
         try:
             # Check if the table exists
             cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
-            table_exists = cursor.fetchone()
+            try:
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+                table_exists = cursor.fetchone()
+            except Error as e:
+                print(f"Error checking for users table: {e}")
+                conn.close()
+                return False
             
             if not table_exists:
                 # Create users table if it doesn't exist
@@ -46,12 +47,11 @@ def init_db():
                                 password TEXT NOT NULL,
                                 name TEXT NOT NULL
                             ); """
-                
                 cursor.execute(users_table)
                 conn.commit()
-                print("Created users table")
+                print("Created 'users' table")
             else:
-                print("Users table already exists")
+                print("The 'users' table already exists in the database.")
                 
             # Create therapists table
             therapists_table = """ CREATE TABLE IF NOT EXISTS therapists (
