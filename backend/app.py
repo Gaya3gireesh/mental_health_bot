@@ -49,7 +49,7 @@ try:
         print(f"Using Gemini model: {selected_model}")
         gemini_model = genai.GenerativeModel(selected_model)
     else:
-        print("No suitable Gemini models found, refinement will be skipped")
+        print("No  Gemini models found, refinement will be skipped")
         gemini_model = None
 except Exception as e:
     print(f"Error listing Gemini models: {e}")
