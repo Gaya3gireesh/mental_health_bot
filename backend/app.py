@@ -27,7 +27,8 @@ genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 try:
     available_models = genai.list_models()
     models = [model.name for model in available_models]
-    print(f"Available Gmni modls for use: {models}")
+
+    print(f"Available Gemini modls for use: {models}")
     
     # Try to find the best matching model for text generation
     preferred_models = ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-pro"]
