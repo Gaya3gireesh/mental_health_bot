@@ -18,7 +18,7 @@ def create_connection():
         cursor = conn.cursor()
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = cursor.fetchall()
-        print(f"Available tables in database: {tables}")
+        print(f"Availablessssss tables in database: {tables}")
         return conn
     else:
         print("Error connecting to database")
